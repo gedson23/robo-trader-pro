@@ -175,7 +175,7 @@
       </div>
     </div>
     <div class="signal-box">
-      <div style="font-size:14px; opacity:0.8;">Sinal (EMA + RSI)</div>
+      <div style="font-size:14px; opacity:0.8;">Sinal (EMA + RSI + S/R)</div>
       <span class="signal-text wait" id="signalDisplay">AGUARDANDO</span>
       <div class="small" id="reasonDisplay">—</div>
     </div>
@@ -187,6 +187,8 @@
       <div class="row"><span>EMA 9</span><b id="ema9">--</b></div>
       <div class="row"><span>EMA 21</span><b id="ema21">--</b></div>
       <div class="row"><span>RSI (14)</span><b id="rsi">--</b></div>
+      <div class="row"><span>Suporte</span><b id="suporte">--</b></div>
+      <div class="row"><span>Resistência</span><b id="resistencia">--</b></div>
     </div>
     <div class="card">
       <div class="row">
@@ -214,7 +216,7 @@
       <div><label>Take Profit %</label><input id="tpInput" value="0.8"></div>
       <div><label>Stop Loss %</label><input id="slInput" value="0.5"></div>
       <div><label>Meta Lucro (R$)</label><input id="profitGoalBRL" value="200"></div>
-      <div><label>Intervalo (s)</label><input id="intervalInput" value="15"></div>
+      <div><label>Intervalo (s)</label><input id="intervalInput" value="10"></div>
     </div>
     <div class="grid-2" style="margin-top:8px;">
       <div><label>RSI min (entrada)</label><input id="rsiMin" value="25" type="number" step="1" min="0" max="100"></div>
@@ -317,14 +319,15 @@
       requestWakeLock();
 
       let series = [], ws = null, chart = null, candleSeries = null;
-      let ema9Series, ema21Series, ema50Series, markers = [];
+      let ema9Series, ema21Series, ema50Series, suporteSeries, resistenciaSeries, markers = [];
       let currentSymbol = 'BTCUSDT', currentInterval = '5', currentExchange = 'bybit', currentPosition = null;
       let lastOrderTime = 0, tradeHistory = [], saldoUSDT = 10000, qtyAtivo = 0, usdBrlRate = 5.20;
       let autoTradeEnabled = false, pauseUntil = 0, cooldownUntil = 0;
       let trailingActive = false, trailingHighest = Infinity, trailingLowest = 0;
-      let STRATEGY = { orderQty: 0.001, tp: 0.008, sl: 0.005, minOrderInterval: 15, profitGoalBRL: 200, rsiMin: 25, rsiMax: 75, trailingStop: 0.003, trailingActivation: 0.005, useTrailing: true };
+      let STRATEGY = { orderQty: 0.001, tp: 0.008, sl: 0.005, minOrderInterval: 10, profitGoalBRL: 200, rsiMin: 25, rsiMax: 75, trailingStop: 0.003, trailingActivation: 0.005, useTrailing: true };
       const STORAGE_KEY = 'roboTraderPro_v5.6';
       let wsReconnectTimer = null, reconnectAttempts = 0, manualDisconnect = false;
+      let suporte = 0, resistencia = 0;
 
       const saldoUSDTInput = document.getElementById('saldoUSDTInput');
       const saldoBRLInput = document.getElementById('saldoBRLInput');
@@ -392,7 +395,7 @@
             document.getElementById('tpInput').value = e.strategy.tp || 0.8;
             document.getElementById('slInput').value = e.strategy.sl || 0.5;
             document.getElementById('profitGoalBRL').value = e.strategy.profitGoalBRL || 200;
-            document.getElementById('intervalInput').value = e.strategy.minOrderInterval || 15;
+            document.getElementById('intervalInput').value = e.strategy.minOrderInterval || 10;
             document.getElementById('rsiMin').value = e.strategy.rsiMin || 25;
             document.getElementById('rsiMax').value = e.strategy.rsiMax || 75;
             document.getElementById('trailingStop').value = e.strategy.trailingStop || 0.3;
@@ -434,6 +437,32 @@
         if (document.activeElement !== saldoBRLInput) saldoBRLInput.value = (saldoUSDT * usdBrlRate).toFixed(2);
         const price = series.length ? series[series.length-1].close : 0;
         setText('priceBRL', price ? `R$ ${(price * usdBrlRate).toFixed(2)}` : '--');
+      }
+
+      function calcularSuporteResistencia(periodo = 20) {
+        if (series.length < periodo) return;
+        const recentes = series.slice(-periodo);
+        const highs = recentes.map(c => c.high);
+        const lows = recentes.map(c => c.low);
+        resistencia = Math.max(...highs);
+        suporte = Math.min(...lows);
+        setText('suporte', suporte.toFixed(2));
+        setText('resistencia', resistencia.toFixed(2));
+        desenharLinhasSR();
+      }
+
+      let linhaSuporte = null, linhaResistencia = null;
+      function desenharLinhasSR() {
+        if (!chart || !suporte || !resistencia) return;
+        if (!linhaSuporte) {
+          linhaSuporte = chart.addLineSeries({ color: '#22c55e', lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+          linhaResistencia = chart.addLineSeries({ color: '#ef4444', lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+        }
+        const agora = series[series.length-1].time;
+        const dados = [{ time: series[0].time, value: suporte }, { time: agora, value: suporte }];
+        const dadosR = [{ time: series[0].time, value: resistencia }, { time: agora, value: resistencia }];
+        linhaSuporte.setData(dados);
+        linhaResistencia.setData(dadosR);
       }
 
       function initChart() {
@@ -655,14 +684,18 @@
         const closes = series.map(c=>c.close), price = closes[closes.length-1];
         const e9 = ema(closes,9), e21 = ema(closes,21), _rsi = rsi(closes,14);
         if(!e9||!e21||_rsi===null) { setText('reasonDisplay','Indicadores incompletos'); return {signal:'AGUARDAR'}; }
+        calcularSuporteResistencia(20);
         const prev9 = ema(closes.slice(0,-1),9), prev21 = ema(closes.slice(0,-1),21);
         const cruzouCima = (prev9<=prev21) && (e9>e21), cruzouBaixo = (prev9>=prev21) && (e9<e21);
         let signal='AGUARDAR', reason='';
         const rsiOk = _rsi >= STRATEGY.rsiMin && _rsi <= STRATEGY.rsiMax;
+        // Estratégia com suporte e resistência
+        const pertoSuporte = price <= suporte * 1.005;
+        const pertoResistencia = price >= resistencia * 0.995;
         if (!currentPosition) {
-          if (cruzouCima && rsiOk) { signal='COMPRAR'; reason=`EMA9↑21 | RSI ${_rsi.toFixed(1)}`; }
-          else if (cruzouBaixo && rsiOk) { signal='VENDER'; reason=`EMA9↓21 | RSI ${_rsi.toFixed(1)}`; }
-          else reason = `EMA9:${e9.toFixed(2)} EMA21:${e21.toFixed(2)} RSI:${_rsi.toFixed(1)}`;
+          if (pertoSuporte && cruzouCima && rsiOk) { signal='COMPRAR'; reason=`Suporte ${suporte.toFixed(2)} | EMA9↑21 | RSI ${_rsi.toFixed(1)}`; }
+          else if (pertoResistencia && cruzouBaixo && rsiOk) { signal='VENDER'; reason=`Resistência ${resistencia.toFixed(2)} | EMA9↓21 | RSI ${_rsi.toFixed(1)}`; }
+          else reason = `EMA9:${e9.toFixed(2)} EMA21:${e21.toFixed(2)} RSI:${_rsi.toFixed(1)} | S:${suporte.toFixed(2)} R:${resistencia.toFixed(2)}`;
         } else reason = `Posição aberta (${currentPosition.side})`;
         setText('ema9', e9.toFixed(2)); setText('ema21', e21.toFixed(2)); setText('rsi', _rsi.toFixed(1));
         setText('price', price.toFixed(2)); setText('priceBRL', `R$ ${(price*usdBrlRate).toFixed(2)}`);
@@ -909,4 +942,4 @@
   }
 </script>
 </body>
-</html>
+      </html>
