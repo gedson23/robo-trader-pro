@@ -130,7 +130,7 @@
 </div>
 
 <div id="mainApp" style="display:none;">
-  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v6.8 Agressivo</span></h1>
+  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v6.9 Preciso</span></h1>
   <div style="display:flex; justify-content:space-between; align-items:center;">
     <span class="wake-lock-status" id="wakelockStatus">🔋 Tela: Normal</span>
     <span style="font-size:13px;">📱 Mantenha esta aba aberta</span>
@@ -179,7 +179,7 @@
       </div>
     </div>
     <div class="signal-box">
-      <div style="font-size:14px; opacity:0.8;">Sinal (Scalper EMA + Candle)</div>
+      <div style="font-size:14px; opacity:0.8;">Sinal (EMA50 + Alinhamento + Candle)</div>
       <span class="signal-text wait" id="signalDisplay">AGUARDANDO</span>
       <div class="small" id="reasonDisplay">—</div>
     </div>
@@ -224,8 +224,8 @@
       <div><label>Intervalo (s)</label><input id="intervalInput" value="10"></div>
     </div>
     <div class="grid-2" style="margin-top:8px;">
-      <div><label>RSI min (entrada)</label><input id="rsiMin" value="25" type="number" step="1" min="0" max="100"></div>
-      <div><label>RSI max (entrada)</label><input id="rsiMax" value="75" type="number" step="1" min="0" max="100"></div>
+      <div><label>RSI min (entrada)</label><input id="rsiMin" value="35" type="number" step="1" min="0" max="100"></div>
+      <div><label>RSI max (entrada)</label><input id="rsiMax" value="65" type="number" step="1" min="0" max="100"></div>
       <div><label>Trailing Stop %</label><input id="trailingStop" value="0.10" step="0.01"></div>
       <div><label>Ativar Trailing em %</label><input id="trailingActivation" value="0.15" step="0.01"></div>
     </div>
@@ -352,8 +352,8 @@
       let lastOrderTime = 0, tradeHistory = [], saldoUSDT = 10000, qtyAtivo = 0, usdBrlRate = 5.20;
       let autoTradeEnabled = false, pauseUntil = 0, cooldownUntil = 0;
       let trailingActive = false, trailingHighest = Infinity, trailingLowest = 0;
-      let STRATEGY = { orderQty: 300, tp: 0.003, sl: 0.002, minOrderInterval: 10, profitGoalBRL: 200, rsiMin: 25, rsiMax: 75, trailingStop: 0.001, trailingActivation: 0.0015, useTrailing: true };
-      const STORAGE_KEY = 'roboTraderPro_v6.8';
+      let STRATEGY = { orderQty: 300, tp: 0.003, sl: 0.002, minOrderInterval: 10, profitGoalBRL: 200, rsiMin: 35, rsiMax: 65, trailingStop: 0.001, trailingActivation: 0.0015, useTrailing: true };
+      const STORAGE_KEY = 'roboTraderPro_v6.9';
       let wsReconnectTimer = null, reconnectAttempts = 0, manualDisconnect = false;
       let suporte = 0, resistencia = 0;
 
@@ -424,8 +424,8 @@
             document.getElementById('slInput').value = e.strategy.sl || 0.2;
             document.getElementById('profitGoalBRL').value = e.strategy.profitGoalBRL || 200;
             document.getElementById('intervalInput').value = e.strategy.minOrderInterval || 10;
-            document.getElementById('rsiMin').value = e.strategy.rsiMin || 25;
-            document.getElementById('rsiMax').value = e.strategy.rsiMax || 75;
+            document.getElementById('rsiMin').value = e.strategy.rsiMin || 35;
+            document.getElementById('rsiMax').value = e.strategy.rsiMax || 65;
             document.getElementById('trailingStop').value = e.strategy.trailingStop || 0.10;
             document.getElementById('trailingActivation').value = e.strategy.trailingActivation || 0.15;
             document.getElementById('useTrailingStop').checked = e.strategy.useTrailing !== false;
@@ -700,6 +700,7 @@
       }
       window.executarOrdemManual = (side) => executarOrdem(side);
 
+      // ===== ANÁLISE PRECISA (v6.9) =====
       function analyze() {
         if (series.length < 50) {
           setText('reasonDisplay', 'Aguardando dados (min 50 velas)');
@@ -719,8 +720,8 @@
           return { signal: 'AGUARDAR' };
         }
 
-        const tendenciaAlta = e50 > prev50;
-        const tendenciaBaixa = e50 < prev50;
+        const tendenciaAlta = e50 > prev50 && price > e50;      // EMA50 subindo E preço acima
+        const tendenciaBaixa = e50 < prev50 && price < e50;     // EMA50 caindo E preço abaixo
         const emasAlinhadasCompra = e9 > e21 && e21 > e50;
         const emasAlinhadasVenda = e9 < e21 && e21 < e50;
         const dist21 = Math.abs(price - e21) / price;
@@ -733,14 +734,22 @@
         let reason = '';
 
         if (!currentPosition) {
-          if (tendenciaAlta && emasAlinhadasCompra && dist21 < 0.02 && _rsi > 25 && _rsi < 75 && candleAlta) {
+          if (tendenciaAlta && emasAlinhadasCompra && dist21 < 0.015 && _rsi > 35 && _rsi < 65 && candleAlta) {
             signal = 'COMPRAR';
-            reason = `↑ Scalp Compra (EMAs alinhadas, candle alta)`;
-          } else if (tendenciaBaixa && emasAlinhadasVenda && dist21 < 0.02 && _rsi > 25 && _rsi < 75 && candleBaixa) {
+            reason = `Tend. Alta | Pullback EMA21 | RSI ${_rsi.toFixed(1)}`;
+          } else if (tendenciaBaixa && emasAlinhadasVenda && dist21 < 0.015 && _rsi > 35 && _rsi < 65 && candleBaixa) {
             signal = 'VENDER';
-            reason = `↓ Scalp Venda (EMAs alinhadas, candle baixa)`;
+            reason = `Tend. Baixa | Repuxo EMA21 | RSI ${_rsi.toFixed(1)}`;
           } else {
-            reason = `Aguardando alinhamento / candle`;
+            // Explicar o que está faltando
+            if (!tendenciaAlta && !tendenciaBaixa) reason = 'Tendência indefinida';
+            else if (tendenciaAlta && !emasAlinhadasCompra) reason = 'EMAs não alinhadas para compra';
+            else if (tendenciaBaixa && !emasAlinhadasVenda) reason = 'EMAs não alinhadas para venda';
+            else if (dist21 >= 0.015) reason = `Dist. EMA21 ${(dist21*100).toFixed(1)}% (>1.5%)`;
+            else if (_rsi <= 35 || _rsi >= 65) reason = `RSI ${_rsi.toFixed(1)} fora de 35-65`;
+            else if (tendenciaAlta && !candleAlta) reason = 'Candle não é de alta';
+            else if (tendenciaBaixa && !candleBaixa) reason = 'Candle não é de baixa';
+            else reason = 'Aguardando condição ideal';
           }
         } else {
           reason = `Posição aberta (${currentPosition.side})`;
