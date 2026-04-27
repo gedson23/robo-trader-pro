@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
   <title>🤖 Robô Trader PRO</title>
+  <!-- Manifest para PWA -->
+  <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Rob%C3%B4%20Trader%20PRO%22%2C%22short_name%22%3A%22TraderPRO%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230f172a%22%2C%22theme_color%22%3A%22%2338bdf8%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%20100%20100'%3E%3Ccircle%20cx%3D'50'%20cy%3D'50'%20r%3D'48'%20fill%3D'%2338bdf8'%2F%3E%3Ctext%20x%3D'50'%20y%3D'70'%20font-size%3D'60'%20text-anchor%3D'middle'%20fill%3D'%23000'%3E🤖%3C%2Ftext%3E%3C%2Fsvg%3E%22%2C%22sizes%22%3A%22100x100%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
   <style>
@@ -129,7 +131,7 @@
 </div>
 
 <div id="mainApp" style="display:none;">
-  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v6.2</span></h1>
+  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v6.3</span></h1>
   <div style="display:flex; justify-content:space-between; align-items:center;">
     <span class="wake-lock-status" id="wakelockStatus">🔋 Tela: Normal</span>
     <span style="font-size:13px;">📱 Mantenha esta aba aberta</span>
@@ -269,20 +271,15 @@
 </div>
 
 <script>
-  const CODIGOS_VALIDOS = [
-    "RB-00001","RB-00002","RB-00003","RB-00004","RB-00005",
-    "RB-00006","RB-00007","RB-00008","RB-00009","RB-00010"
-  ];
-
+  // ===== ATIVAÇÃO =====
+  const CODIGOS_VALIDOS = ["RB-00001","RB-00002","RB-00003","RB-00004","RB-00005","RB-00006","RB-00007","RB-00008","RB-00009","RB-00010"];
   function verificarCodigo(c) { return CODIGOS_VALIDOS.includes(c); }
   function verificarAtivacaoLocal() { return localStorage.getItem('robo_ativado') === 'true'; }
-
   function mostrarApp() {
     document.getElementById('activationScreen').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     iniciarRobo();
   }
-
   function ativarRobo() {
     const codigo = document.getElementById('activationCode').value.trim();
     const errEl = document.getElementById('activationError');
@@ -297,9 +294,39 @@
       loadEl.innerText = '';
     }
   }
-
   if (verificarAtivacaoLocal()) mostrarApp();
 
+  // ===== SOM DE BIP =====
+  function bipCompra() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = 800; // agudo
+      gain.gain.value = 0.3;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.15);
+    } catch(e) {}
+  }
+  function bipVenda() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = 400; // grave
+      gain.gain.value = 0.3;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.15);
+    } catch(e) {}
+  }
+
+  // ===== ROBO PRINCIPAL =====
   function iniciarRobo() {
     (function(){
       let wakeLock = null;
@@ -328,7 +355,7 @@
       let autoTradeEnabled = false, pauseUntil = 0, cooldownUntil = 0;
       let trailingActive = false, trailingHighest = Infinity, trailingLowest = 0;
       let STRATEGY = { orderQty: 0.001, tp: 0.012, sl: 0.006, minOrderInterval: 10, profitGoalBRL: 200, rsiMin: 30, rsiMax: 70, trailingStop: 0.005, trailingActivation: 0.01, useTrailing: true };
-      const STORAGE_KEY = 'roboTraderPro_v6.2';
+      const STORAGE_KEY = 'roboTraderPro_v6.3';
       let wsReconnectTimer = null, reconnectAttempts = 0, manualDisconnect = false;
       let suporte = 0, resistencia = 0;
 
@@ -435,6 +462,7 @@
         } catch (e) {}
       }
 
+      // Indicadores
       function ema(arr, n) { if (arr.length < n) return null; const k = 2/(n+1); let e = arr.slice(0, n).reduce((a,b) => a+b,0)/n; for (let i=n; i<arr.length; i++) e = arr[i]*k + e*(1-k); return e; }
       function rsi(closes, n=14) { if (closes.length < n+1) return null; let gains=0,losses=0; for (let i=closes.length-n; i<closes.length; i++) { const diff=closes[i]-closes[i-1]; if(diff>=0) gains+=diff; else losses-=diff; } const avgGain=gains/n, avgLoss=losses/n; if(avgLoss===0) return 100; return 100-(100/(1+(avgGain/avgLoss))); }
       function atr(seriesArr, period=14) { if (!seriesArr || seriesArr.length < period+1) return null; let trueRanges = []; for (let i=seriesArr.length-period; i<seriesArr.length; i++) { const h=seriesArr[i].high, l=seriesArr[i].low, pc=seriesArr[i-1].close; trueRanges.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc))); } return trueRanges.reduce((a,b) => a+b,0) / period; }
@@ -498,6 +526,7 @@
         ema50Series.setData(calcEma(closes, 50));
       }
 
+      // API
       function temAPI() { return document.getElementById('apiKey').value.trim() !== ''; }
       function exchangeBaseUrl() {
         const testnet = document.getElementById('testnetMode').checked;
@@ -521,7 +550,6 @@
           return { base: exchangeBaseUrl(), headers: { 'X-MBX-APIKEY': apiKey, 'Content-Type': 'application/x-www-form-urlencoded' }, body: `${payload}&signature=${sign}` };
         }
       }
-
       async function exchangeRequest(endpoint, method='GET', body=null) {
         const cfg = signAndHeaders(method, endpoint, body);
         const url = cfg.base + endpoint;
@@ -574,6 +602,7 @@
         }
         log(`✅ Ordem ${side}`);
         adicionarMarcador(side);
+        if (side === 'BUY' || side === 'Buy') bipCompra(); else bipVenda();
         const price = series.length ? series[series.length-1].close : 0;
         if (side === 'BUY' || side === 'Buy') simularCompra(price, qty);
         else simularVenda(price, qty);
@@ -594,12 +623,14 @@
           saldoUSDT -= price*qty; qtyAtivo = qty;
           currentPosition = { side: 'BUY', qty, entryPrice: price };
           adicionarMarcador('BUY'); log(`🟢 ABERTURA LONG ${qty} a ${price.toFixed(2)}`);
+          bipCompra();
           resetTrailing(); trailingHighest = price;
         } else if (currentPosition.side === 'SELL') {
           const lucro = (currentPosition.entryPrice - price) * currentPosition.qty;
           saldoUSDT += currentPosition.qty * currentPosition.entryPrice + lucro;
           adicionarTradeHistorico({ tipo:'FECHAR SHORT', qtd: currentPosition.qty, entrada: currentPosition.entryPrice, saida: price, lucro, lucroPercent: (lucro/(currentPosition.qty*currentPosition.entryPrice))*100, data:new Date() });
           adicionarMarcador('BUY'); log(`🔵 FECHAMENTO SHORT +${lucro.toFixed(2)} USDT`);
+          bipCompra();
           qtyAtivo = 0; currentPosition = null; cooldownUntil = Date.now()+30000; resetTrailing();
         } else {
           if (saldoUSDT < price*qty) { log('❌ Saldo insuficiente'); return false; }
@@ -607,6 +638,7 @@
           const total = currentPosition.qty*currentPosition.entryPrice + price*qty;
           currentPosition.qty += qty; currentPosition.entryPrice = total / currentPosition.qty;
           qtyAtivo = currentPosition.qty; adicionarMarcador('BUY'); log(`🟢 AUMENTO LONG +${qty}`);
+          bipCompra();
           trailingHighest = Math.max(trailingHighest, price);
         }
         atualizarSaldoUI(); renderPosition(); salvarEstado(); return true;
@@ -619,12 +651,14 @@
           saldoUSDT -= garantia; qtyAtivo = -qty;
           currentPosition = { side:'SELL', qty, entryPrice: price };
           adicionarMarcador('SELL'); log(`🔴 ABERTURA SHORT ${qty} a ${price.toFixed(2)}`);
+          bipVenda();
           resetTrailing(); trailingLowest = price;
         } else if (currentPosition.side === 'BUY') {
           const lucro = (price - currentPosition.entryPrice) * currentPosition.qty;
           saldoUSDT += price * currentPosition.qty;
           adicionarTradeHistorico({ tipo:'FECHAR LONG', qtd:currentPosition.qty, entrada:currentPosition.entryPrice, saida:price, lucro, lucroPercent:((price-currentPosition.entryPrice)/currentPosition.entryPrice)*100, data:new Date() });
           adicionarMarcador('SELL'); log(`🔴 FECHAMENTO LONG +${lucro.toFixed(2)} USDT`);
+          bipVenda();
           qtyAtivo = 0; currentPosition = null; cooldownUntil = Date.now()+30000; resetTrailing();
         } else {
           const garantia = price*qty*0.5;
@@ -634,6 +668,7 @@
           const totalVal = currentPosition.qty*currentPosition.entryPrice + qty*price;
           currentPosition.qty = totalQty; currentPosition.entryPrice = totalVal/totalQty;
           qtyAtivo = -currentPosition.qty; adicionarMarcador('SELL'); log(`🔴 AUMENTO SHORT +${qty}`);
+          bipVenda();
           trailingLowest = Math.min(trailingLowest, price);
         }
         atualizarSaldoUI(); renderPosition(); salvarEstado(); verificarMetaLucro(); return true;
@@ -844,7 +879,16 @@
         if (currentExchange==='bybit') ws.send(JSON.stringify({op:'subscribe', args:[`kline.${currentInterval}.${currentSymbol}`]}));
       }
 
-      async function fetchHistoricalKlines() {
+      async function fetchHistoricalKlines(force = false) {
+        // Só baixa se não houver velas salvas ou se for forçado (ex: troca de timeframe)
+        if (series.length && !force) {
+          // apenas desenha o que já temos
+          candleSeries.setData(series);
+          atualizarLinhasEMA();
+          analisarEAtualizarUI();
+          iniciarTimerVela();
+          return;
+        }
         setText('chartStatus','⏳');
         try {
           if (currentExchange==='bybit') {
@@ -863,6 +907,7 @@
           setText('chartStatus','✅');
         } catch(e) { setText('chartStatus','❌'); }
         atualizarLinhasEMA(); analisarEAtualizarUI(); iniciarTimerVela();
+        salvarEstado();
       }
 
       function updateRealtime(kline) {
@@ -884,42 +929,51 @@
         document.getElementById('intervalDisplay').innerText = currentInterval + (currentInterval==='60'?'h':'m');
         atualizarUIExchange(); if (!chart) initChart();
         manualDisconnect = false;
-        fetchHistoricalKlines().then(() => {
-          setText('connStatus','⏳ Conectando...');
-          try {
-            ws = new WebSocket(getWsUrl());
-            ws.onopen = () => {
-              setText('connStatus','🟢 ONLINE'); subscribeWs();
-              log(`✅ Conectado (${currentExchange.toUpperCase()})`); reconnectAttempts=0;
-              document.getElementById('reconnectAttemptsDisplay').innerText = '';
-              document.getElementById('connectBtn').innerHTML = '🔴 Desconectar';
-            };
-            ws.onmessage = (e) => {
-              try {
-                const d = JSON.parse(e.data);
-                if (currentExchange==='bybit' && d.topic?.startsWith('kline')) updateRealtime(d.data[0]);
-                else if (currentExchange==='binance' && d.k) updateRealtime({ start:d.k.t, open:d.k.o, high:d.k.h, low:d.k.l, close:d.k.c });
-              } catch(e){}
-            };
-            ws.onerror = () => setText('connStatus','🔴 ERRO');
-            ws.onclose = () => {
-              setText('connStatus','🟡 Offline');
-              document.getElementById('connectBtn').innerHTML = '🔌 Conectar';
-              if (!manualDisconnect && autoTradeEnabled && reconnectAttempts < 10) {
-                const delay = Math.min(30000, 1000 * Math.pow(1.5, reconnectAttempts));
-                reconnectAttempts++;
-                document.getElementById('reconnectAttemptsDisplay').innerText = `⏳ Reconectando em ${Math.round(delay/1000)}s`;
-                wsReconnectTimer = setTimeout(() => { if(autoTradeEnabled && !manualDisconnect) conectarWebSocket(); }, delay);
-              } else if (reconnectAttempts >= 10) {
-                log('❌ Muitas tentativas de reconexão. Verifique a rede.');
-                document.getElementById('reconnectAttemptsDisplay').innerText = '❌ Falha na reconexão';
-              }
-            };
-          } catch (e) {
-            setText('connStatus','❌ URL inválida');
-            log('Erro ao criar WebSocket: ' + e.message);
-          }
-        });
+
+        // Se já existem velas salvas, não baixa histórico, apenas desenha
+        if (series.length) {
+          candleSeries.setData(series);
+          atualizarLinhasEMA();
+          analisarEAtualizarUI();
+          iniciarTimerVela();
+        } else {
+          fetchHistoricalKlines(true);
+        }
+
+        setText('connStatus','⏳ Conectando...');
+        try {
+          ws = new WebSocket(getWsUrl());
+          ws.onopen = () => {
+            setText('connStatus','🟢 ONLINE'); subscribeWs();
+            log(`✅ Conectado (${currentExchange.toUpperCase()})`); reconnectAttempts=0;
+            document.getElementById('reconnectAttemptsDisplay').innerText = '';
+            document.getElementById('connectBtn').innerHTML = '🔴 Desconectar';
+          };
+          ws.onmessage = (e) => {
+            try {
+              const d = JSON.parse(e.data);
+              if (currentExchange==='bybit' && d.topic?.startsWith('kline')) updateRealtime(d.data[0]);
+              else if (currentExchange==='binance' && d.k) updateRealtime({ start:d.k.t, open:d.k.o, high:d.k.h, low:d.k.l, close:d.k.c });
+            } catch(e){}
+          };
+          ws.onerror = () => setText('connStatus','🔴 ERRO');
+          ws.onclose = () => {
+            setText('connStatus','🟡 Offline');
+            document.getElementById('connectBtn').innerHTML = '🔌 Conectar';
+            if (!manualDisconnect && autoTradeEnabled && reconnectAttempts < 10) {
+              const delay = Math.min(30000, 1000 * Math.pow(1.5, reconnectAttempts));
+              reconnectAttempts++;
+              document.getElementById('reconnectAttemptsDisplay').innerText = `⏳ Reconectando em ${Math.round(delay/1000)}s`;
+              wsReconnectTimer = setTimeout(() => { if(autoTradeEnabled && !manualDisconnect) conectarWebSocket(); }, delay);
+            } else if (reconnectAttempts >= 10) {
+              log('❌ Muitas tentativas de reconexão. Verifique a rede.');
+              document.getElementById('reconnectAttemptsDisplay').innerText = '❌ Falha na reconexão';
+            }
+          };
+        } catch (e) {
+          setText('connStatus','❌ URL inválida');
+          log('Erro ao criar WebSocket: ' + e.message);
+        }
       }
 
       window.toggleConnection = () => {
@@ -940,7 +994,7 @@
         atualizarTimerVela(); timerInterval = setInterval(atualizarTimerVela, 500);
       }
 
-      // Eventos
+      // Eventos dos controles
       document.getElementById('exchangeSelect').addEventListener('change', function() { currentExchange=this.value; atualizarUIExchange(); salvarEstado(); });
       document.getElementById('autoTradeEnabled').addEventListener('change', e => {
         autoTradeEnabled = e.target.checked; salvarEstado();
@@ -953,9 +1007,16 @@
       document.getElementById('intervalSelect').addEventListener('change', function() {
         currentInterval = this.value;
         document.getElementById('intervalDisplay').innerText = currentInterval + (currentInterval==='60'?'h':'m');
-        salvarEstado(); if(series.length) iniciarTimerVela();
+        // ao trocar timeframe, força baixar novas velas (e zera as salvas)
+        series = [];
+        salvarEstado();
+        if (ws && ws.readyState===WebSocket.OPEN) {
+          ws.close();
+          conectarWebSocket();
+        } else if (autoTradeEnabled) conectarWebSocket();
+        else fetchHistoricalKlines(true);
       });
-      document.getElementById('refreshChartBtn').onclick = () => fetchHistoricalKlines();
+      document.getElementById('refreshChartBtn').onclick = () => fetchHistoricalKlines(true);
 
       initChart();
       const carregou = carregarEstado();
@@ -970,13 +1031,23 @@
       autoTradeEnabled = document.getElementById('autoTradeEnabled').checked;
       atualizarSaldoUI(); atualizarPainelHistorico(); renderPosition();
       if (series.length) { candleSeries.setData(series); atualizarLinhasEMA(); analisarEAtualizarUI(); iniciarTimerVela(); }
-      if (autoTradeEnabled) conectarWebSocket(); else if (!series.length) fetchHistoricalKlines();
+      if (autoTradeEnabled) conectarWebSocket(); else if (!series.length) fetchHistoricalKlines(true);
       if (temAPI()) setTimeout(atualizarSaldoReal, 1000);
 
       window.addEventListener('beforeunload', () => salvarEstado());
       setInterval(atualizarCotacaoBRL, 300000);
     })();
   }
+
+  // ===== SERVICE WORKER (para PWA) =====
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register("data:application/javascript," + encodeURIComponent(
+        "self.addEventListener('fetch', e => { e.respondWith(fetch(e.request).catch(() => caches.match(e.request))); });" +
+        "self.addEventListener('install', () => self.skipWaiting());"
+      ));
+    });
+  }
 </script>
 </body>
-  </html>
+                                  </html>
