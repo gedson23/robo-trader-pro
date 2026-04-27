@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
   <title>🤖 Robô Trader PRO</title>
-  <!-- Manifest inline (compatível com PWABuilder) -->
   <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Rob%C3%B4%20Trader%20PRO%22%2C%22short_name%22%3A%22TraderPRO%22%2C%22start_url%22%3A%22.%2Frobo.html%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230f172a%22%2C%22theme_color%22%3A%22%2338bdf8%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%20100%20100'%3E%3Ccircle%20cx%3D'50'%20cy%3D'50'%20r%3D'48'%20fill%3D'%2338bdf8'%2F%3E%3Ctext%20x%3D'50'%20y%3D'70'%20font-size%3D'60'%20text-anchor%3D'middle'%20fill%3D'%23000'%3E🤖%3C%2Ftext%3E%3C%2Fsvg%3E%22%2C%22sizes%22%3A%22100x100%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
@@ -131,7 +130,7 @@
 </div>
 
 <div id="mainApp" style="display:none;">
-  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v6.5</span></h1>
+  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v6.6</span></h1>
   <div style="display:flex; justify-content:space-between; align-items:center;">
     <span class="wake-lock-status" id="wakelockStatus">🔋 Tela: Normal</span>
     <span style="font-size:13px;">📱 Mantenha esta aba aberta</span>
@@ -218,8 +217,7 @@
       <label class="flex-row"><input type="checkbox" id="autoTradeEnabled"> 🤖 Auto-Trade</label>
     </div>
     <div class="grid-2">
-      <div><label>Qtd. Ordem (BTC)</label><input id="orderQty" value="0.001" step="0.0001"></div>
-      <div><label>💵 Comprar em R$</label><input id="orderBRL" value="300"><button onclick="calcularBTCfromBRL()" style="margin-top:4px; padding:10px;">Calcular BTC</button></div>
+      <div><label>Qtd. Ordem (R$)</label><input id="orderQty" value="300" step="1" min="0"></div>
       <div><label>Take Profit %</label><input id="tpInput" value="1.2"></div>
       <div><label>Stop Loss %</label><input id="slInput" value="0.6"></div>
       <div><label>Meta Lucro (R$)</label><input id="profitGoalBRL" value="200"></div>
@@ -354,8 +352,8 @@
       let lastOrderTime = 0, tradeHistory = [], saldoUSDT = 10000, qtyAtivo = 0, usdBrlRate = 5.20;
       let autoTradeEnabled = false, pauseUntil = 0, cooldownUntil = 0;
       let trailingActive = false, trailingHighest = Infinity, trailingLowest = 0;
-      let STRATEGY = { orderQty: 0.001, tp: 0.012, sl: 0.006, minOrderInterval: 10, profitGoalBRL: 200, rsiMin: 30, rsiMax: 70, trailingStop: 0.005, trailingActivation: 0.01, useTrailing: true };
-      const STORAGE_KEY = 'roboTraderPro_v6.5';
+      let STRATEGY = { orderQty: 300, tp: 0.012, sl: 0.006, minOrderInterval: 10, profitGoalBRL: 200, rsiMin: 30, rsiMax: 70, trailingStop: 0.005, trailingActivation: 0.01, useTrailing: true };
+      const STORAGE_KEY = 'roboTraderPro_v6.6';
       let wsReconnectTimer = null, reconnectAttempts = 0, manualDisconnect = false;
       let suporte = 0, resistencia = 0;
 
@@ -421,7 +419,7 @@
           document.getElementById('intervalDisplay').innerText = currentInterval + (currentInterval==='60'?'h':'m');
           document.getElementById('testnetMode').checked = e.testnet !== false;
           if (e.strategy) {
-            document.getElementById('orderQty').value = e.strategy.orderQty || 0.001;
+            document.getElementById('orderQty').value = e.strategy.orderQty || 300;
             document.getElementById('tpInput').value = e.strategy.tp || 1.2;
             document.getElementById('slInput').value = e.strategy.sl || 0.6;
             document.getElementById('profitGoalBRL').value = e.strategy.profitGoalBRL || 200;
@@ -673,7 +671,13 @@
       }
 
       async function executarOrdem(side) {
-        STRATEGY.orderQty = +document.getElementById('orderQty').value || 0.001;
+        // Lê o valor em reais e converte para quantidade de BTC
+        const orderBRL = +document.getElementById('orderQty').value || 300;
+        const price = series.length ? series[series.length-1].close : 0;
+        if (!price) { log('Preço indisponível'); return; }
+        const qtyBTC = orderBRL / usdBrlRate / price;
+        
+        STRATEGY.orderQty = orderBRL;
         STRATEGY.tp = +document.getElementById('tpInput').value/100;
         STRATEGY.sl = +document.getElementById('slInput').value/100;
         STRATEGY.minOrderInterval = +document.getElementById('intervalInput').value;
@@ -682,8 +686,7 @@
         STRATEGY.trailingStop = +document.getElementById('trailingStop').value/100;
         STRATEGY.trailingActivation = +document.getElementById('trailingActivation').value/100;
         STRATEGY.useTrailing = document.getElementById('useTrailingStop').checked;
-        const price = series.length ? series[series.length-1].close : 0;
-        if (!price) { log('Preço indisponível'); return; }
+
         if (currentPosition) {
           const close = (currentPosition.side==='BUY' && side==='SELL') || (currentPosition.side==='SELL' && side==='BUY');
           if (close) {
@@ -692,9 +695,8 @@
             lastOrderTime = Date.now(); return;
           }
         }
-        const qty = STRATEGY.orderQty;
-        if (temAPI()) await placeOrderReal(side, qty);
-        else side==='BUY' ? simularCompra(price, qty) : simularVenda(price, qty);
+        if (temAPI()) await placeOrderReal(side, qtyBTC);
+        else side==='BUY' ? simularCompra(price, qtyBTC) : simularVenda(price, qtyBTC);
         lastOrderTime = Date.now();
       }
       window.executarOrdemManual = (side) => executarOrdem(side);
@@ -844,11 +846,6 @@
       }
 
       window.limparHistoricoTrades = () => { tradeHistory=[]; atualizarPainelHistorico(); salvarEstado(); };
-      window.calcularBTCfromBRL = () => {
-        const brl = +document.getElementById('orderBRL').value;
-        const price = series.length ? series[series.length-1].close : 0;
-        if(price) document.getElementById('orderQty').value = (brl/usdBrlRate/price).toFixed(6);
-      };
 
       function pararConexaoWebSocket(manualmente=true) {
         manualDisconnect = manualDisconnect;
@@ -1032,7 +1029,6 @@
     })();
   }
 
-  // ===== SERVICE WORKER (inline via Blob, compatível com PWABuilder) =====
   if ('serviceWorker' in navigator) {
     const swCode = `self.addEventListener('fetch', e => { e.respondWith(fetch(e.request).catch(() => caches.match(e.request))); }); self.addEventListener('install', () => self.skipWaiting());`;
     const blob = new Blob([swCode], { type: 'application/javascript' });
@@ -1043,4 +1039,4 @@
   }
 </script>
 </body>
-      </html>
+  </html>
