@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
   <title>🤖 Robô Trader PRO</title>
-  <!-- Manifest para PWA -->
-  <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Rob%C3%B4%20Trader%20PRO%22%2C%22short_name%22%3A%22TraderPRO%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230f172a%22%2C%22theme_color%22%3A%22%2338bdf8%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%20100%20100'%3E%3Ccircle%20cx%3D'50'%20cy%3D'50'%20r%3D'48'%20fill%3D'%2338bdf8'%2F%3E%3Ctext%20x%3D'50'%20y%3D'70'%20font-size%3D'60'%20text-anchor%3D'middle'%20fill%3D'%23000'%3E🤖%3C%2Ftext%3E%3C%2Fsvg%3E%22%2C%22sizes%22%3A%22100x100%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+  <!-- Manifest inline (compatível com PWABuilder) -->
+  <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Rob%C3%B4%20Trader%20PRO%22%2C%22short_name%22%3A%22TraderPRO%22%2C%22start_url%22%3A%22.%2Frobo.html%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230f172a%22%2C%22theme_color%22%3A%22%2338bdf8%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%20100%20100'%3E%3Ccircle%20cx%3D'50'%20cy%3D'50'%20r%3D'48'%20fill%3D'%2338bdf8'%2F%3E%3Ctext%20x%3D'50'%20y%3D'70'%20font-size%3D'60'%20text-anchor%3D'middle'%20fill%3D'%23000'%3E🤖%3C%2Ftext%3E%3C%2Fsvg%3E%22%2C%22sizes%22%3A%22100x100%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
   <style>
@@ -131,7 +131,7 @@
 </div>
 
 <div id="mainApp" style="display:none;">
-  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v6.3</span></h1>
+  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v6.5</span></h1>
   <div style="display:flex; justify-content:space-between; align-items:center;">
     <span class="wake-lock-status" id="wakelockStatus">🔋 Tela: Normal</span>
     <span style="font-size:13px;">📱 Mantenha esta aba aberta</span>
@@ -303,7 +303,7 @@
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'square';
-      osc.frequency.value = 800; // agudo
+      osc.frequency.value = 800;
       gain.gain.value = 0.3;
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -317,7 +317,7 @@
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'triangle';
-      osc.frequency.value = 400; // grave
+      osc.frequency.value = 400;
       gain.gain.value = 0.3;
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -355,7 +355,7 @@
       let autoTradeEnabled = false, pauseUntil = 0, cooldownUntil = 0;
       let trailingActive = false, trailingHighest = Infinity, trailingLowest = 0;
       let STRATEGY = { orderQty: 0.001, tp: 0.012, sl: 0.006, minOrderInterval: 10, profitGoalBRL: 200, rsiMin: 30, rsiMax: 70, trailingStop: 0.005, trailingActivation: 0.01, useTrailing: true };
-      const STORAGE_KEY = 'roboTraderPro_v6.3';
+      const STORAGE_KEY = 'roboTraderPro_v6.5';
       let wsReconnectTimer = null, reconnectAttempts = 0, manualDisconnect = false;
       let suporte = 0, resistencia = 0;
 
@@ -462,7 +462,6 @@
         } catch (e) {}
       }
 
-      // Indicadores
       function ema(arr, n) { if (arr.length < n) return null; const k = 2/(n+1); let e = arr.slice(0, n).reduce((a,b) => a+b,0)/n; for (let i=n; i<arr.length; i++) e = arr[i]*k + e*(1-k); return e; }
       function rsi(closes, n=14) { if (closes.length < n+1) return null; let gains=0,losses=0; for (let i=closes.length-n; i<closes.length; i++) { const diff=closes[i]-closes[i-1]; if(diff>=0) gains+=diff; else losses-=diff; } const avgGain=gains/n, avgLoss=losses/n; if(avgLoss===0) return 100; return 100-(100/(1+(avgGain/avgLoss))); }
       function atr(seriesArr, period=14) { if (!seriesArr || seriesArr.length < period+1) return null; let trueRanges = []; for (let i=seriesArr.length-period; i<seriesArr.length; i++) { const h=seriesArr[i].high, l=seriesArr[i].low, pc=seriesArr[i-1].close; trueRanges.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc))); } return trueRanges.reduce((a,b) => a+b,0) / period; }
@@ -526,7 +525,6 @@
         ema50Series.setData(calcEma(closes, 50));
       }
 
-      // API
       function temAPI() { return document.getElementById('apiKey').value.trim() !== ''; }
       function exchangeBaseUrl() {
         const testnet = document.getElementById('testnetMode').checked;
@@ -880,9 +878,7 @@
       }
 
       async function fetchHistoricalKlines(force = false) {
-        // Só baixa se não houver velas salvas ou se for forçado (ex: troca de timeframe)
         if (series.length && !force) {
-          // apenas desenha o que já temos
           candleSeries.setData(series);
           atualizarLinhasEMA();
           analisarEAtualizarUI();
@@ -930,7 +926,6 @@
         atualizarUIExchange(); if (!chart) initChart();
         manualDisconnect = false;
 
-        // Se já existem velas salvas, não baixa histórico, apenas desenha
         if (series.length) {
           candleSeries.setData(series);
           atualizarLinhasEMA();
@@ -994,7 +989,6 @@
         atualizarTimerVela(); timerInterval = setInterval(atualizarTimerVela, 500);
       }
 
-      // Eventos dos controles
       document.getElementById('exchangeSelect').addEventListener('change', function() { currentExchange=this.value; atualizarUIExchange(); salvarEstado(); });
       document.getElementById('autoTradeEnabled').addEventListener('change', e => {
         autoTradeEnabled = e.target.checked; salvarEstado();
@@ -1007,7 +1001,6 @@
       document.getElementById('intervalSelect').addEventListener('change', function() {
         currentInterval = this.value;
         document.getElementById('intervalDisplay').innerText = currentInterval + (currentInterval==='60'?'h':'m');
-        // ao trocar timeframe, força baixar novas velas (e zera as salvas)
         series = [];
         salvarEstado();
         if (ws && ws.readyState===WebSocket.OPEN) {
@@ -1039,15 +1032,15 @@
     })();
   }
 
-  // ===== SERVICE WORKER (para PWA) =====
+  // ===== SERVICE WORKER (inline via Blob, compatível com PWABuilder) =====
   if ('serviceWorker' in navigator) {
+    const swCode = `self.addEventListener('fetch', e => { e.respondWith(fetch(e.request).catch(() => caches.match(e.request))); }); self.addEventListener('install', () => self.skipWaiting());`;
+    const blob = new Blob([swCode], { type: 'application/javascript' });
+    const swUrl = URL.createObjectURL(blob);
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register("data:application/javascript," + encodeURIComponent(
-        "self.addEventListener('fetch', e => { e.respondWith(fetch(e.request).catch(() => caches.match(e.request))); });" +
-        "self.addEventListener('install', () => self.skipWaiting());"
-      ));
+      navigator.serviceWorker.register(swUrl);
     });
   }
 </script>
 </body>
-                                  </html>
+      </html>
