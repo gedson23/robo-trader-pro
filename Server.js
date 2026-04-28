@@ -1,6 +1,6 @@
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
+const { server } = require('socket.io');
 const WebSocket = require('ws');
 const axios = require('axios');
 const fs = require('fs');
