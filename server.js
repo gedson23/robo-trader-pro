@@ -228,9 +228,19 @@ function log(msg) {
   io.emit('log', msg);
 }
 
+// ========== CONEXÃO WEBSOCKET (COM TRATAMENTO DE ERRO) ==========
 function connectWS() {
+  log('Conectando ao WebSocket da Binance...');
   const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@kline_1m');
+
+  // Captura erros (ex.: 451) para evitar queda do servidor
+  ws.on('error', (err) => {
+    console.error('Erro no WebSocket:', err.message);
+    // Não faz mais nada; o evento 'close' será chamado em seguida
+  });
+
   ws.on('open', () => log('Conectado Binance'));
+
   ws.on('message', (data) => {
     const k = JSON.parse(data).k;
     if (!k.x) return;
@@ -245,16 +255,26 @@ function connectWS() {
     }
     step();
   });
-  ws.on('close', () => setTimeout(connectWS, 5000));
+
+  ws.on('close', (code, reason) => {
+    console.warn(`WebSocket fechado (código ${code}). Motivo: ${reason}. Tentando reconectar em 5s...`);
+    setTimeout(connectWS, 5000);
+  });
 }
 
+// ========== CARREGAMENTO INICIAL DO HISTÓRICO ==========
 (async () => {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=200');
     series = data.map(k => ({ time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] }));
     volumeHistory = series.map(c => c.volume);
     log('Histórico carregado');
-  } catch (e) { log('Erro ao carregar histórico'); }
+  } catch (e) {
+    // Mostra detalhes do erro, mas não quebra o servidor
+    console.error('Erro ao carregar histórico:', e.message);
+    log(`Erro histórico: ${e.message}`);
+  }
+  // Inicia o WebSocket de qualquer forma
   connectWS();
 })();
 
