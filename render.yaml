@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: robo-trader-bybit
+    env: node
+    plan: free
+    region: singapore   # <-- Singapura para evitar bloqueio da Bybit
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    branch: main
