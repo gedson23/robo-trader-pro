@@ -1,39 +1,16 @@
 const express = require('express');
 const http = require('http');
+const { Server } = require('socket.io');
 const WebSocket = require('ws');
 const axios = require('axios');
 const fs = require('fs');
-const path = require('path');
 
 const PORT = process.env.PORT || 3000;
-const STORAGE_FILE = './state.json';
-
-let series = [];
-let volumeHistory = [];
-let saldo = 10000;
-let position = null;
-let autoTrade = false;
-let fastMode = false;
-let strategy = {
-  orderQty: 300,
-  tpAtr: 3.0,
-  slAtr: 2.0,
-  adxMin: 20,
-  rsiMin: 35,
-  rsiMax: 65,
-  safeHours: true,
-  useTrailing: true,
-  useSAR: false,
-  volMult: 1.2,
-  profitGoal: 200,
-  minInterval: 10
-};
-let lastOrderTime = 0;
-
 const app = express();
 const server = http.createServer(app);
-const io = require('socket.io')(server);
+const io = new Server(server);
 
+// Servir arquivos estáticos
 app.use(express.static('public'));
 if (!fs.existsSync('public')) fs.mkdirSync('public');
 fs.writeFileSync('public/index.html', `
@@ -69,6 +46,30 @@ function toggleAuto(){ socket.emit('toggleAuto'); }
 function toggleFast(){ socket.emit('toggleFast'); }
 </script></body></html>`);
 
+// Estado do robô
+let series = [];
+let volumeHistory = [];
+let saldo = 10000;
+let position = null;
+let autoTrade = false;
+let fastMode = false;
+let strategy = {
+  orderQty: 300,
+  tpAtr: 3.0,
+  slAtr: 2.0,
+  adxMin: 20,
+  rsiMin: 35,
+  rsiMax: 65,
+  safeHours: true,
+  useTrailing: true,
+  useSAR: false,
+  volMult: 1.2,
+  profitGoal: 200,
+  minInterval: 10
+};
+let lastOrderTime = 0;
+
+// Indicadores
 function ema(arr, n) {
   if (arr.length < n) return null;
   const k = 2 / (n + 1);
@@ -76,20 +77,17 @@ function ema(arr, n) {
   for (let i = n; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
   return e;
 }
-
 function rsi(closes, n = 14) {
   if (closes.length < n + 1) return null;
   let gains = 0, losses = 0;
   for (let i = closes.length - n; i < closes.length; i++) {
     const diff = closes[i] - closes[i - 1];
-    if (diff >= 0) gains += diff;
-    else losses -= diff;
+    if (diff >= 0) gains += diff; else losses -= diff;
   }
   const ag = gains / n, al = losses / n;
   if (al === 0) return 100;
   return 100 - (100 / (1 + (ag / al)));
 }
-
 function atr(highs, lows, closes, period = 14) {
   if (highs.length < period + 1) return null;
   let tr = 0;
@@ -98,7 +96,6 @@ function atr(highs, lows, closes, period = 14) {
   }
   return tr / period;
 }
-
 function adx(highs, lows, closes, period = 14) {
   if (closes.length < period * 2) return null;
   const tr = [], plusDM = [], minusDM = [];
@@ -108,8 +105,8 @@ function adx(highs, lows, closes, period = 14) {
     const up = ph < h ? h - ph : 0;
     const down = pl > l ? pl - l : 0;
     tr.push(Math.max(h - l, Math.abs(h - closes[i - 1]), Math.abs(l - closes[i - 1])));
-    plusDM.push(up > down ? up : 0);
-    minusDM.push(down > up ? down : 0);
+    plusDM.push(up > down && up > 0 ? up : 0);
+    minusDM.push(down > up && down > 0 ? down : 0);
   }
   let atrSmooth = tr.slice(0, period).reduce((a, b) => a + b, 0);
   let plusSmooth = plusDM.slice(0, period).reduce((a, b) => a + b, 0);
@@ -125,7 +122,6 @@ function adx(highs, lows, closes, period = 14) {
   if (diPlus + diMinus === 0) return 0;
   return Math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100;
 }
-
 function sar(highs, lows, closes, accel = 0.02, maxAccel = 0.2) {
   if (highs.length < 2) return [];
   let isLong = closes[1] > closes[0];
@@ -136,27 +132,15 @@ function sar(highs, lows, closes, accel = 0.02, maxAccel = 0.2) {
     let sarVal = result[i - 1].value + af * (ep - result[i - 1].value);
     if (isLong) {
       if (lows[i] < sarVal) {
-        isLong = false;
-        sarVal = ep;
-        af = accel;
-        ep = lows[i];
+        isLong = false; sarVal = ep; af = accel; ep = lows[i];
       } else {
-        if (highs[i] > ep) {
-          ep = highs[i];
-          af = Math.min(af + accel, maxAccel);
-        }
+        if (highs[i] > ep) { ep = highs[i]; af = Math.min(af + accel, maxAccel); }
       }
     } else {
       if (highs[i] > sarVal) {
-        isLong = true;
-        sarVal = ep;
-        af = accel;
-        ep = highs[i];
+        isLong = true; sarVal = ep; af = accel; ep = highs[i];
       } else {
-        if (lows[i] < ep) {
-          ep = lows[i];
-          af = Math.min(af + accel, maxAccel);
-        }
+        if (lows[i] < ep) { ep = lows[i]; af = Math.min(af + accel, maxAccel); }
       }
     }
     result.push({ value: sarVal });
@@ -175,11 +159,10 @@ function analyze() {
   const volumeAtual = series[series.length - 1].volume || 0;
   const avgVolume = volumeHistory.slice(-10).reduce((a, b) => a + b, 0) / 10 || 0;
   const prev50 = series.length >= 51 ? ema(closes.slice(0, -1), 50) : null;
-  const _sar = sar(series.map(c => c.high), series.map(c => c.low), closes);
 
   if (strategy.safeHours && new Date().getUTCHours() < 6) return { signal: 'AGUARDAR', reason: 'Horário 00-06 UTC' };
   if (!e9 || !e21 || !e50 || _rsi === null || _adx === null || !_atr) return { signal: 'AGUARDAR', reason: 'Indicadores incompletos' };
-  if (!prev50) return { signal: 'AGUARDAR', reason: 'Aguardando EMA50 anterior' };
+  if (!prev50) return { signal: 'AGUARDAR', reason: 'EMA50 anterior indisponível' };
 
   const fast = fastMode;
   const adxMin = fast ? 15 : strategy.adxMin;
