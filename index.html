@@ -1,896 +1,294 @@
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+
+const PORT = process.env.PORT || 3000;
+const STORAGE_FILE = './state.json';
+
+let series = [];
+let volumeHistory = [];
+let saldo = 10000;
+let position = null;
+let autoTrade = false;
+let fastMode = false;
+let strategy = {
+  orderQty: 300,
+  tpAtr: 3.0,
+  slAtr: 2.0,
+  adxMin: 20,
+  rsiMin: 35,
+  rsiMax: 65,
+  safeHours: true,
+  useTrailing: true,
+  useSAR: false,
+  volMult: 1.2,
+  profitGoal: 200,
+  minInterval: 10
+};
+let lastOrderTime = 0;
+
+const app = express();
+const server = http.createServer(app);
+const io = require('socket.io')(server);
+
+app.use(express.static('public'));
+if (!fs.existsSync('public')) fs.mkdirSync('public');
+fs.writeFileSync('public/index.html', `
 <!DOCTYPE html>
-<html lang="pt-br">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-  <title>🤖 Robô Trader PRO v7.1</title>
-  <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Rob%C3%B4%20Trader%20PRO%22%2C%22short_name%22%3A%22TraderPRO%22%2C%22start_url%22%3A%22.%2Frobo.html%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230f172a%22%2C%22theme_color%22%3A%22%2338bdf8%22%7D">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-  <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
-  <style>
-    * { box-sizing: border-box; margin: 0; }
-    body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f172a; color: #fff; padding: 12px; padding-bottom: 40px; -webkit-tap-highlight-color: transparent; }
-    h1 { color: #38bdf8; text-align: center; margin-bottom: 8px; font-size: 1.6rem; }
-    .chart-wrapper { background: #1e293b; border-radius: 14px; padding: 8px; margin-bottom: 12px; }
-    #chart-container { width: 100%; height: 350px; }
-    .toolbar { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
-    .toolbar select, .toolbar button { padding: 10px 8px; border-radius: 8px; border: none; background: #0f172a; color: #fff; font-weight: bold; cursor: pointer; font-size: 13px; min-height: 44px; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
-    .card { background: #1e293b; border-radius: 14px; padding: 12px; margin-bottom: 12px; }
-    .row { display: flex; justify-content: space-between; margin: 6px 0; font-size: 14px; }
-    .buy { color: #22c55e; } .sell { color: #ef4444; } .wait { color: #facc15; }
-    .small { opacity: 0.8; font-size: 12px; margin-top: 6px; }
-    button { padding: 12px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; min-height: 48px; font-size: 15px; background: #2d3a4f; color: #fff; width: 100%; }
-    .btn-success { background: #22c55e; }
-    .btn-danger { background: #ef4444; }
-    .btn-stop { background: #dc2626; }
-    select, input { padding: 10px; border-radius: 8px; border: none; background: #0f172a; color: #fff; width: 100%; margin-top: 4px; font-size: 14px; min-height: 44px; }
-    .saldo-input { background: transparent; border: 1px solid #334155; width: 100px; text-align: right; }
-    #log, #history-log { max-height: 200px; overflow-y: auto; font-family: monospace; background: #0f172a; padding: 10px; border-radius: 8px; font-size: 12px; }
-    .status-badge { display: inline-block; padding: 4px 8px; border-radius: 20px; font-size: 12px; font-weight: bold; }
-    .flex-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-    .trade-item { border-bottom: 1px solid #334155; padding: 8px 0; }
-    .profit { color: #22c55e; } .loss { color: #ef4444; }
-    .action-buttons { display: flex; gap: 8px; margin: 12px 0; }
-    .action-buttons button { flex: 1; }
-    .pnl-signal-row { display: flex; justify-content: space-between; background: #1e293b; border-radius: 14px; padding: 12px; margin-bottom: 12px; }
-    .signal-text { font-size: 22px; font-weight: bold; }
-    .interval-badge { background: #2d3a4f; padding: 4px 8px; border-radius: 20px; font-size: 12px; margin-left: 6px; }
-    .timer-badge { background: #1e3a5f; padding: 4px 8px; border-radius: 20px; font-size: 12px; font-weight: bold; }
-    .timer-footer { display: flex; justify-content: flex-end; margin-top: 6px; }
-    input[type="checkbox"] { width: 24px; height: 24px; accent-color: #38bdf8; background: #0f172a; border: 2px solid #38bdf8; border-radius: 6px; margin-right: 8px; }
-    .activation-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
-    .activation-box { background: #1e293b; border-radius: 20px; padding: 30px; width: 100%; max-width: 400px; }
-    .activation-box h2 { color: #38bdf8; margin-bottom: 20px; text-align: center; }
-    .activation-box input { margin: 10px 0; padding: 14px; font-size: 16px; text-align: center; letter-spacing: 2px; }
-    .activation-box button { width: 100%; margin-top: 15px; }
-    .error-msg { color: #ef4444; font-size: 13px; margin-top: 5px; }
-    .payment-box { margin-top: 8px; }
-    .payment-box input { margin-bottom: 6px; }
-  </style>
-</head>
-<body>
-
-<div id="activationScreen" class="activation-screen">
-  <div class="activation-box">
-    <h2>🔐 Ativar Robô Trader PRO</h2>
-    <p style="text-align:center; margin-bottom:15px;">Insira o código de acesso</p>
-    <input type="text" id="activationCode" placeholder="Ex: RB-00001" autocomplete="off">
-    <button onclick="ativarRobo()" style="background:#38bdf8; color:#000;">ATIVAR</button>
-    <p id="activationError" class="error-msg"></p>
-    <p id="activationLoading" class="loading-msg"></p>
-    <div class="small">Adquira: bit.ly/robo-trader-pro</div>
-  </div>
+<html><head><meta charset="UTF-8"><title>Robô Trader</title>
+<style>body{background:#0f172a;color:#fff;font-family:Arial;padding:20px;max-width:500px;margin:auto}.card{background:#1e293b;padding:15px;border-radius:12px;margin:10px 0}button{padding:12px;margin:4px;border-radius:8px;border:none;font-weight:bold;background:#2d3a4f;color:#fff}.buy{color:#22c55e}.sell{color:#ef4444}.wait{color:#facc15}.log{max-height:150px;overflow-y:auto;background:#0f172a;padding:10px;font-size:12px}</style>
+</head><body>
+<h2>🤖 Robô Trader 24h</h2>
+<div class="card">
+<span>Saldo USDT:</span> <b id="saldo">--</b><br>
+<span>Preço:</span> <b id="preco">--</b><br>
+<span>Sinal:</span> <b id="sinal">--</b>
 </div>
-
-<div id="mainApp" style="display:none;">
-  <h1>🤖 Robô Trader PRO <span style="font-size:14px;">v7.1 Rápido</span></h1>
-  <div style="display:flex; justify-content:space-between;">
-    <span class="status-badge" id="wakelockStatus">🔋 Tela: Normal</span>
-    <span style="font-size:13px;">📱 Mantenha a aba aberta</span>
-  </div>
-  <div class="chart-wrapper">
-    <div class="toolbar">
-      <select id="exchangeSelect"><option value="bybit">Bybit</option><option value="binance">Binance</option></select>
-      <select id="symbolSelect"><option value="BTCUSDT">BTC/USDT</option><option value="ETHUSDT">ETH/USDT</option><option value="BNBUSDT">BNB/USDT</option><option value="SOLUSDT">SOL/USDT</option></select>
-      <select id="intervalSelect"><option value="1" selected>1m</option><option value="3">3m</option><option value="5">5m</option><option value="15">15m</option><option value="30">30m</option><option value="60">1h</option></select>
-      <button id="refreshChartBtn">🔄</button>
-      <span style="flex:1;"></span>
-      <span id="chartStatus" class="status-badge wait">⏳</span>
-      <span id="intervalDisplay" class="interval-badge">1m</span>
-    </div>
-    <div id="chart-container"></div>
-    <div class="timer-footer"><span id="timerDisplay" class="timer-badge">⏱️ --:--</span></div>
-  </div>
-  <div class="action-buttons">
-    <button class="btn-success" onclick="executarOrdemManual('BUY')">📈 COMPRAR</button>
-    <button class="btn-danger" onclick="executarOrdemManual('SELL')">📉 VENDER</button>
-    <button class="btn-stop" onclick="pararAutoTrade()">⛔ PARAR AUTO</button>
-  </div>
-  <div class="pnl-signal-row">
-    <div>
-      <div style="font-size:14px;">PnL Atual</div>
-      <span style="font-size:26px; font-weight:bold;" id="pnlDisplay">—</span>
-      <span class="badge" id="pnlPercentDisplay">0.00%</span>
-    </div>
-    <div>
-      <div style="font-size:14px;">Sinal (v7.1)</div>
-      <span class="signal-text wait" id="signalDisplay">AGUARDANDO</span>
-      <div class="small" id="reasonDisplay">—</div>
-    </div>
-  </div>
-  <div class="grid-2">
-    <div class="card">
-      <div class="row"><span>Preço USDT</span><b id="price">--</b></div>
-      <div class="row"><span>Preço BRL</span><b id="priceBRL">--</b></div>
-      <div class="row"><span>EMA 9</span><b id="ema9">--</b></div>
-      <div class="row"><span>EMA 21</span><b id="ema21">--</b></div>
-      <div class="row"><span>EMA 50</span><b id="ema50">--</b></div>
-      <div class="row"><span>RSI (14)</span><b id="rsi">--</b></div>
-      <div class="row"><span>ADX (14)</span><b id="adx">--</b></div>
-      <div class="row"><span>ATR (14)</span><b id="atr">--</b></div>
-      <div class="row"><span>Suporte</span><b id="suporte">--</b></div>
-      <div class="row"><span>Resistência</span><b id="resistencia">--</b></div>
-      <div class="row"><span>SAR</span><b id="sar">--</b></div>
-    </div>
-    <div class="card">
-      <div class="row"><span>💰 Saldo USDT</span><input type="number" id="saldoUSDTInput" class="saldo-input" value="10000.00" step="0.01"></div>
-      <div class="row"><span>💰 Saldo BRL</span><input type="number" id="saldoBRLInput" class="saldo-input" value="52000.00" step="0.01"></div>
-      <div class="row"><span>Posição</span><b id="position">—</b></div>
-      <div class="row"><span>Qtd. Moeda</span><b id="positionQty">—</b></div>
-      <div class="row"><span>Entrada (USDT)</span><b id="entryPrice">—</b></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="flex-row" style="justify-content: space-between;">
-      <b style="color:#38bdf8;">⚙️ Estratégia & Conta</b>
-      <label class="flex-row"><input type="checkbox" id="autoTradeEnabled"> 🤖 Auto-Trade</label>
-    </div>
-    <div class="grid-2">
-      <div><label>Qtd. Ordem (R$)</label><input id="orderQty" value="300"></div>
-      <div><label>Mult. TP (ATR)</label><input id="tpAtrMult" value="3.0"></div>
-      <div><label>Mult. SL (ATR)</label><input id="slAtrMult" value="2.0"></div>
-      <div><label>Meta Lucro (R$)</label><input id="profitGoalBRL" value="200"></div>
-      <div><label>Intervalo (s)</label><input id="intervalInput" value="10"></div>
-    </div>
-    <div class="grid-2" style="margin-top:8px;">
-      <div><label>RSI min</label><input id="rsiMin" value="35" type="number"></div>
-      <div><label>RSI max</label><input id="rsiMax" value="65" type="number"></div>
-      <div><label>ADX mín</label><input id="adxMin" value="20" type="number"></div>
-      <div><label>Volume mult.</label><input id="volMult" value="1.2" step="0.1"></div>
-    </div>
-    <label class="flex-row"><input type="checkbox" id="useTrailingStop" checked> 🛡️ Trailing Stop</label>
-    <label class="flex-row"><input type="checkbox" id="useSAR"> 🎯 Parabolic SAR</label>
-    <label class="flex-row"><input type="checkbox" id="safeHoursFilter" checked> 🕒 Pausar 00h-06h UTC</label>
-    <label class="flex-row"><input type="checkbox" id="fastMode"> 🚀 Modo Rápido (mais trades)</label>
-    
-    <div class="flex-row" style="margin-top:10px;">
-      <span id="connStatus" class="status-badge wait">⏳ Desconectado</span>
-      <button id="connectBtn" onclick="toggleConnection()" style="flex:1;">🔌 Conectar</button>
-      <span id="reconnectAttemptsDisplay"></span>
-    </div>
-
-    <div class="api-section" style="margin-top:10px;">
-      <div class="small">🔐 API da <span id="exchangeLabel">Bybit</span></div>
-      <input id="apiKey" placeholder="API Key" autocomplete="off">
-      <input id="apiSecret" type="password" placeholder="API Secret" autocomplete="off">
-      <label class="flex-row"><input type="checkbox" id="testnetMode" checked> 🧪 Testnet</label>
-      <button onclick="atualizarSaldoReal()" style="margin-top:10px;">💰 Atualizar Saldo da Conta</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="flex-row" style="justify-content: space-between;">
-      <b style="color:#38bdf8;">💳 Pix / USDT (Simulado)</b>
-    </div>
-    <div class="grid-2">
-      <div class="payment-box">
-        <div class="small">Pix (Depósito/Saque)</div>
-        <input type="number" id="pixValue" placeholder="Valor em R$" step="0.01" min="1">
-        <button onclick="simularPix('deposito')" style="background:#22c55e;">Depositar (Sim)</button>
-        <button onclick="simularPix('saque')" style="background:#ef4444; margin-top:4px;">Sacar (Sim)</button>
-      </div>
-      <div class="payment-box">
-        <div class="small">USDT (Depósito/Saque)</div>
-        <input type="number" id="usdtValue" placeholder="Quantia em USDT" step="0.01" min="1">
-        <button onclick="simularUSDT('deposito')" style="background:#22c55e;">Depositar (Sim)</button>
-        <button onclick="simularUSDT('saque')" style="background:#ef4444; margin-top:4px;">Sacar (Sim)</button>
-      </div>
-    </div>
-    <div class="small" style="color:#ffaa00; margin-top:8px;">⚠️ Simulação local. Para transações reais é necessário servidor homologado.</div>
-  </div>
-
-  <div class="card">
-    <div class="flex-row" style="justify-content: space-between;">
-      <b style="color:#38bdf8;">📊 Histórico Realizado</b>
-      <span id="totalPnLRealizado">R$ 0,00</span>
-    </div>
-    <div id="history-log"><div class="small">Nenhuma operação fechada.</div></div>
-    <button onclick="limparHistoricoTrades()">🗑️ Limpar Histórico</button>
-  </div>
-
-  <div class="card">
-    <b>📜 Log</b>
-    <div id="log"></div>
-    <button onclick="document.getElementById('log').innerHTML=''">🗑️ Limpar Log</button>
-  </div>
+<div class="card">
+<button onclick="toggleAuto()" id="btnAuto">AutoTrade OFF</button>
+<button onclick="toggleFast()" id="btnFast">Modo Rápido OFF</button>
 </div>
-
+<div class="card"><b>Log:</b><div class="log" id="log"></div></div>
+<script src="/socket.io/socket.io.js"></script>
 <script>
-// ===== ATIVAÇÃO =====
-const CODIGOS_VALIDOS = ["RB-00001","RB-00002","RB-00003","RB-00004","RB-00005","RB-00006","RB-00007","RB-00008","RB-00009","RB-00010"];
-function verificarCodigo(c) { return CODIGOS_VALIDOS.includes(c); }
-function verificarAtivacaoLocal() { return localStorage.getItem('robo_ativado') === 'true'; }
-function mostrarApp() {
-  document.getElementById('activationScreen').style.display = 'none';
-  document.getElementById('mainApp').style.display = 'block';
-  iniciarRobo();
+const socket = io();
+socket.on('state', d => {
+  document.getElementById('saldo').innerText = d.saldo?.toFixed(2) || '--';
+  document.getElementById('preco').innerText = d.preco || '--';
+  document.getElementById('sinal').innerText = d.signal || '--';
+  document.getElementById('sinal').className = d.signal === 'COMPRAR' ? 'buy' : d.signal === 'VENDER' ? 'sell' : 'wait';
+});
+socket.on('log', msg => {
+  const div = document.getElementById('log');
+  div.innerHTML = '<div>'+msg+'</div>' + div.innerHTML;
+});
+function toggleAuto(){ socket.emit('toggleAuto'); }
+function toggleFast(){ socket.emit('toggleFast'); }
+</script></body></html>`);
+
+function ema(arr, n) {
+  if (arr.length < n) return null;
+  const k = 2 / (n + 1);
+  let e = arr.slice(0, n).reduce((a, b) => a + b, 0) / n;
+  for (let i = n; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
+  return e;
 }
-function ativarRobo() {
-  const codigo = document.getElementById('activationCode').value.trim();
-  const errEl = document.getElementById('activationError');
-  const loadEl = document.getElementById('activationLoading');
-  errEl.innerText = ''; loadEl.innerText = 'Verificando...';
-  if (!codigo) { errEl.innerText = 'Digite o código.'; loadEl.innerText = ''; return; }
-  if (verificarCodigo(codigo)) {
-    localStorage.setItem('robo_ativado', 'true');
-    mostrarApp();
-  } else {
-    errEl.innerText = 'Código inválido.';
-    loadEl.innerText = '';
+
+function rsi(closes, n = 14) {
+  if (closes.length < n + 1) return null;
+  let gains = 0, losses = 0;
+  for (let i = closes.length - n; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
   }
+  const ag = gains / n, al = losses / n;
+  if (al === 0) return 100;
+  return 100 - (100 / (1 + (ag / al)));
 }
-if (verificarAtivacaoLocal()) mostrarApp();
 
-// ===== SOM =====
-function bipCompra() { try { const ctx=new AudioContext(); const o=ctx.createOscillator(); o.type='square'; o.frequency.value=800; o.connect(ctx.destination); o.start(); o.stop(ctx.currentTime+0.15); } catch(e){} }
-function bipVenda() { try { const ctx=new AudioContext(); const o=ctx.createOscillator(); o.type='triangle'; o.frequency.value=400; o.connect(ctx.destination); o.start(); o.stop(ctx.currentTime+0.15); } catch(e){} }
-
-// ===== ROBO PRINCIPAL =====
-function iniciarRobo() {
-  (function(){
-    // Wake Lock
-    let wakeLock = null;
-    async function requestWakeLock() {
-      try { if ('wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); document.getElementById('wakelockStatus').innerHTML = '🔋 Tela: Sempre ligada ✅'; } } catch(e) {}
-    }
-    requestWakeLock();
-    document.addEventListener('visibilitychange', requestWakeLock);
-
-    // Variáveis
-    let series = [], ws = null, chart = null, candleSeries = null;
-    let ema9Series, ema21Series, ema50Series, sarSeries, linhaSuporte = null, linhaResistencia = null;
-    let markers = [];
-    let currentSymbol = 'BTCUSDT', currentInterval = '1', currentExchange = 'bybit', currentPosition = null;
-    let lastOrderTime = 0, tradeHistory = [], saldoUSDT = 10000, qtyAtivo = 0, usdBrlRate = 5.20;
-    let autoTradeEnabled = false, pauseUntil = 0, cooldownUntil = 0;
-    let trailingActive = false, trailingHighest = Infinity, trailingLowest = 0;
-    let STRATEGY = { orderQty:300, tpAtr:3.0, slAtr:2.0, minOrderInterval:10, profitGoalBRL:200, rsiMin:35, rsiMax:65, adxMin:20, volMult:1.2, useTrailing:true, useSAR:false, safeHours:true, fastMode:false };
-    const STORAGE_KEY = 'roboTraderPro_v7.1';
-    let wsReconnectTimer = null, reconnectAttempts = 0, manualDisconnect = false;
-    let suporte = 0, resistencia = 0, volumeHistory = [];
-
-    const saldoUSDTInput = document.getElementById('saldoUSDTInput');
-    const saldoBRLInput = document.getElementById('saldoBRLInput');
-
-    function atualizarSaldoEditavel(origem) {
-      if (origem === 'usdt') {
-        const val = parseFloat(saldoUSDTInput.value) || 0; saldoUSDT = val;
-        saldoBRLInput.value = (val * usdBrlRate).toFixed(2);
-      } else {
-        const val = parseFloat(saldoBRLInput.value) || 0; saldoUSDT = val / usdBrlRate;
-        saldoUSDTInput.value = saldoUSDT.toFixed(2);
-      }
-      salvarEstado();
-    }
-    saldoUSDTInput.addEventListener('input', ()=>atualizarSaldoEditavel('usdt'));
-    saldoBRLInput.addEventListener('input', ()=>atualizarSaldoEditavel('brl'));
-
-    function salvarEstado() {
-      const e = {
-        saldoUSDT, qtyAtivo, currentPosition, tradeHistory,
-        autoTradeEnabled: document.getElementById('autoTradeEnabled').checked,
-        exchange: currentExchange, symbol: currentSymbol, interval: currentInterval,
-        testnet: document.getElementById('testnetMode').checked,
-        series: series.slice(-200),
-        strategy: {
-          orderQty: document.getElementById('orderQty').value,
-          tpAtrMult: document.getElementById('tpAtrMult').value,
-          slAtrMult: document.getElementById('slAtrMult').value,
-          profitGoalBRL: document.getElementById('profitGoalBRL').value,
-          minOrderInterval: document.getElementById('intervalInput').value,
-          rsiMin: document.getElementById('rsiMin').value,
-          rsiMax: document.getElementById('rsiMax').value,
-          adxMin: document.getElementById('adxMin').value,
-          volMult: document.getElementById('volMult').value,
-          useTrailing: document.getElementById('useTrailingStop').checked,
-          useSAR: document.getElementById('useSAR').checked,
-          safeHours: document.getElementById('safeHoursFilter').checked,
-          fastMode: document.getElementById('fastMode').checked
-        }
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(e));
-    }
-
-    function carregarEstado() {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return false;
-      try {
-        const e = JSON.parse(saved);
-        saldoUSDT = e.saldoUSDT || 10000; qtyAtivo = e.qtyAtivo || 0;
-        currentPosition = e.currentPosition || null; tradeHistory = e.tradeHistory || [];
-        autoTradeEnabled = e.autoTradeEnabled || false;
-        document.getElementById('autoTradeEnabled').checked = autoTradeEnabled;
-        if (e.exchange) currentExchange = e.exchange;
-        if (e.symbol) currentSymbol = e.symbol;
-        if (e.interval) currentInterval = e.interval;
-        document.getElementById('exchangeSelect').value = currentExchange;
-        document.getElementById('symbolSelect').value = currentSymbol;
-        document.getElementById('intervalSelect').value = currentInterval;
-        document.getElementById('intervalDisplay').innerText = currentInterval + (currentInterval==='60'?'h':'m');
-        document.getElementById('testnetMode').checked = e.testnet !== false;
-        if (e.strategy) {
-          document.getElementById('orderQty').value = e.strategy.orderQty || 300;
-          document.getElementById('tpAtrMult').value = e.strategy.tpAtrMult || 3.0;
-          document.getElementById('slAtrMult').value = e.strategy.slAtrMult || 2.0;
-          document.getElementById('profitGoalBRL').value = e.strategy.profitGoalBRL || 200;
-          document.getElementById('intervalInput').value = e.strategy.minOrderInterval || 10;
-          document.getElementById('rsiMin').value = e.strategy.rsiMin || 35;
-          document.getElementById('rsiMax').value = e.strategy.rsiMax || 65;
-          document.getElementById('adxMin').value = e.strategy.adxMin || 20;
-          document.getElementById('volMult').value = e.strategy.volMult || 1.2;
-          document.getElementById('useTrailingStop').checked = e.strategy.useTrailing !== false;
-          document.getElementById('useSAR').checked = e.strategy.useSAR || false;
-          document.getElementById('safeHoursFilter').checked = e.strategy.safeHours !== false;
-          document.getElementById('fastMode').checked = e.strategy.fastMode || false;
-        }
-        if (e.series && e.series.length) series = e.series;
-        saldoUSDTInput.value = saldoUSDT.toFixed(2);
-        saldoBRLInput.value = (saldoUSDT * usdBrlRate).toFixed(2);
-        atualizarUIExchange(); log('📂 Estado restaurado.'); return true;
-      } catch { return false; }
-    }
-
-    function atualizarUIExchange() { document.getElementById('exchangeLabel').innerText = currentExchange==='bybit'?'Bybit':'Binance'; }
-    function log(msg) {
-      const el = document.getElementById('log');
-      el.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}<br>` + el.innerHTML;
-      if (el.children.length > 50) el.lastChild.remove();
-    }
-    function setText(id, val) { const el = document.getElementById(id); if (el) el.innerText = val; }
-
-    // ---- Indicadores ----
-    function ema(arr, n) { if (arr.length < n) return null; const k=2/(n+1); let e=arr.slice(0,n).reduce((a,b)=>a+b,0)/n; for (let i=n;i<arr.length;i++) e=arr[i]*k+e*(1-k); return e; }
-    function rsi(closes, n=14) { if (closes.length<n+1) return null; let gains=0,losses=0; for (let i=closes.length-n;i<closes.length;i++){ const d=closes[i]-closes[i-1]; if(d>=0)gains+=d; else losses-=d; } const ag=gains/n,al=losses/n; if(al===0)return 100; return 100-(100/(1+(ag/al)));}
-    function atr(highs, lows, closes, period=14) { if (highs.length<period+1) return null; let tr=0; for (let i=highs.length-period;i<highs.length;i++){ tr+=Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1])); } return tr/period; }
-    function adx(highs, lows, closes, period=14) { if (closes.length<period*2) return null; let tr=[], plusDM=[], minusDM=[]; for (let i=1;i<closes.length;i++){ const h=highs[i], l=lows[i], ph=highs[i-1], pl=lows[i-1]; const up=ph<h?h-ph:0, down=pl>l?pl-l:0; tr.push(Math.max(h-l,Math.abs(h-closes[i-1]),Math.abs(l-closes[i-1]))); plusDM.push(up>down?up:0); minusDM.push(down>up?down:0); } const atrSmooth = tr.slice(0,period).reduce((a,b)=>a+b,0); let atrVal=atrSmooth, plus=plusDM.slice(0,period).reduce((a,b)=>a+b,0), minus=minusDM.slice(0,period).reduce((a,b)=>a+b,0); for (let i=period;i<tr.length;i++){ atrVal=atrVal-(atrVal/period)+tr[i]; plus=plus-(plus/period)+plusDM[i]; minus=minus-(minus/period)+minusDM[i]; } if (atrVal===0) return 0; const diPlus=(plus/atrVal)*100, diMinus=(minus/atrVal)*100; const dx=(Math.abs(diPlus-diMinus)/(diPlus+diMinus))*100; return dx; }
-    function sar(highs, lows, closes, accelStep=0.02, accelMax=0.2) {
-      if (highs.length<2) return [];
-      let isLong = closes[1] > closes[0];
-      let af = accelStep, ep = isLong ? highs[0] : lows[0], result = [{time: series[0].time, value: isLong ? lows[0] - (highs[0]-lows[0])*0.5 : highs[0] + (highs[0]-lows[0])*0.5 }];
-      for (let i=1; i<closes.length; i++) {
-        let sarVal = result[i-1].value + af * (ep - result[i-1].value);
-        if (isLong) {
-          if (lows[i] < sarVal) { isLong = false; sarVal = ep; af = accelStep; ep = lows[i]; }
-          else { if (highs[i] > ep) { ep = highs[i]; af = Math.min(af+accelStep, accelMax); } }
-        } else {
-          if (highs[i] > sarVal) { isLong = true; sarVal = ep; af = accelStep; ep = highs[i]; }
-          else { if (lows[i] < ep) { ep = lows[i]; af = Math.min(af+accelStep, accelMax); } }
-        }
-        result.push({ time: series[i].time, value: sarVal });
-      }
-      return result;
-    }
-
-    // Gráfico
-    function calcularSuporteResistencia(periodo=30) {
-      if (series.length < 3) return;
-      const recentes = series.slice(-Math.min(periodo, series.length));
-      resistencia = Math.max(...recentes.map(c=>c.high));
-      suporte = Math.min(...recentes.map(c=>c.low));
-      setText('suporte', suporte.toFixed(2));
-      setText('resistencia', resistencia.toFixed(2));
-      desenharLinhasSR();
-    }
-    function desenharLinhasSR() {
-      if (!chart || !suporte || !resistencia) return;
-      if (!linhaSuporte) {
-        linhaSuporte = chart.addLineSeries({ color:'#22c55e', lineWidth:2, lineStyle:2, priceLineVisible:false, lastValueVisible:false });
-        linhaResistencia = chart.addLineSeries({ color:'#ef4444', lineWidth:2, lineStyle:2, priceLineVisible:false, lastValueVisible:false });
-      }
-      const agora = series[series.length-1].time;
-      linhaSuporte.setData([{ time: series[0].time, value: suporte }, { time: agora, value: suporte }]);
-      linhaResistencia.setData([{ time: series[0].time, value: resistencia }, { time: agora, value: resistencia }]);
-    }
-
-    function initChart() {
-      const container = document.getElementById('chart-container');
-      container.innerHTML = '';
-      chart = LightweightCharts.createChart(container, {
-        width: container.clientWidth, height: 350,
-        layout: { background: { color: '#1e293b' }, textColor: '#cbd5e1' },
-        grid: { vertLines: { color: '#2d3a4f' }, horzLines: { color: '#2d3a4f' } },
-        timeScale: { timeVisible: true }
-      });
-      candleSeries = chart.addCandlestickSeries({ upColor:'#22c55e', downColor:'#ef4444', borderUpColor:'#22c55e', borderDownColor:'#ef4444', wickUpColor:'#22c55e', wickDownColor:'#ef4444' });
-      ema9Series = chart.addLineSeries({ color:'#fbbf24', lineWidth:1 });
-      ema21Series = chart.addLineSeries({ color:'#60a5fa', lineWidth:1 });
-      ema50Series = chart.addLineSeries({ color:'#f472b6', lineWidth:1 });
-      sarSeries = chart.addLineSeries({ color:'#a78bfa', lineWidth:1, lineStyle:2 });
-      linhaSuporte = linhaResistencia = null;
-      window.addEventListener('resize', ()=> chart.applyOptions({ width: container.clientWidth }));
-    }
-
-    function adicionarMarcador(side) {
-      if (!candleSeries || !series.length) return;
-      markers.push({ time: series[series.length-1].time, position: side==='BUY'?'belowBar':'aboveBar', color: side==='BUY'?'#22c55e':'#ef4444', shape: side==='BUY'?'arrowUp':'arrowDown', text: side, size:2 });
-      candleSeries.setMarkers(markers);
-    }
-
-    function atualizarLinhasEMA() {
-      if (!series.length) return;
-      const closes = series.map(c=>c.close);
-      const calcEma = (arr, p) => { if (arr.length < p) return []; const k=2/(p+1); let e=arr.slice(0,p).reduce((a,b)=>a+b,0)/p; const res = []; for (let i=p;i<arr.length;i++) { e = arr[i]*k + e*(1-k); res.push({ time: series[i].time, value:e }); } return res; };
-      ema9Series.setData(calcEma(closes, 9));
-      ema21Series.setData(calcEma(closes, 21));
-      ema50Series.setData(calcEma(closes, 50));
-    }
-
-    // Estratégia v7.1 com modo rápido
-    function analyze() {
-      const MIN_VELAS_SINAL = 50;
-      const MIN_VELAS_INDICADORES = 15;
-      if (series.length < MIN_VELAS_INDICADORES) {
-        setText('price', series.length ? series[series.length-1].close.toFixed(2) : '--');
-        return { signal:'AGUARDAR', reason:'Poucas velas ('+series.length+')' };
-      }
-
-      const fastMode = document.getElementById('fastMode').checked;
-      const highs = series.map(c=>c.high), lows = series.map(c=>c.low), closes = series.map(c=>c.close);
-      const price = closes[closes.length-1];
-      const e9 = ema(closes,9), e21 = ema(closes,21), e50 = ema(closes,50);
-      const _rsi = rsi(closes,14), _adx = adx(highs,lows,closes,14);
-      const _atr = atr(highs,lows,closes,14);
-      const volumeAtual = series[series.length-1].volume || 0;
-      const avgVolume = volumeHistory.slice(-10).reduce((a,b)=>a+b,0)/10 || 0;
-      const prev50 = series.length >= 51 ? ema(closes.slice(0,-1),50) : null;
-      calcularSuporteResistencia(30);
-      const _sar = sar(highs,lows,closes);
-
-      setText('price', price.toFixed(2));
-      setText('priceBRL', `R$ ${(price*usdBrlRate).toFixed(2)}`);
-      if (e9) setText('ema9', e9.toFixed(2));
-      if (e21) setText('ema21', e21.toFixed(2));
-      if (e50) setText('ema50', e50.toFixed(2));
-      if (_rsi !== null) setText('rsi', _rsi.toFixed(1));
-      if (_adx !== null) setText('adx', _adx.toFixed(1));
-      if (_atr !== null) setText('atr', _atr.toFixed(2));
-      if (_sar.length) setText('sar', _sar[_sar.length-1].value.toFixed(2));
-      if (sarSeries && _sar.length) sarSeries.setData(_sar);
-
-      if (series.length < MIN_VELAS_SINAL) {
-        setText('reasonDisplay', 'Aguardando '+MIN_VELAS_SINAL+' velas ('+series.length+')');
-        return { signal:'AGUARDAR', reason:'Aguardando '+MIN_VELAS_SINAL+' velas' };
-      }
-
-      if (document.getElementById('safeHoursFilter').checked) {
-        const now = new Date();
-        if (now.getUTCHours() >= 0 && now.getUTCHours() < 6) {
-          setText('reasonDisplay', 'Horário de baixa liquidez (00-06 UTC)');
-          return { signal:'AGUARDAR', reason:'Horário de baixa liquidez' };
-        }
-      }
-
-      if (!e9 || !e21 || !e50 || _rsi===null || _adx===null || !_atr) {
-        setText('reasonDisplay', 'Indicadores incompletos');
-        return { signal:'AGUARDAR', reason:'Indicadores incompletos' };
-      }
-
-      // Parâmetros flexíveis no modo rápido
-      const adxLimite = fastMode ? 15 : STRATEGY.adxMin;
-      const distMax = fastMode ? 0.03 : 0.015;
-      const exigeCandle = !fastMode;
-      const exigeVolume = !fastMode;
-
-      if (_adx < adxLimite) {
-        setText('reasonDisplay', `ADX baixo (${_adx.toFixed(1)} < ${adxLimite})`);
-        return { signal:'AGUARDAR', reason:`ADX baixo` };
-      }
-      if (exigeVolume && avgVolume > 0 && volumeAtual < STRATEGY.volMult * avgVolume) {
-        setText('reasonDisplay', 'Volume atual abaixo da média');
-        return { signal:'AGUARDAR', reason:'Volume fraco' };
-      }
-
-      const tendenciaAlta = e50 > prev50 && price > e50;
-      const tendenciaBaixa = e50 < prev50 && price < e50;
-      const emasAlinhadasCompra = e9 > e21 && e21 > e50;
-      const emasAlinhadasVenda = e9 < e21 && e21 < e50;
-      const dist21 = Math.abs(price - e21)/price;
-      const lastCandle = series[series.length-1];
-      const candleAlta = lastCandle.close > lastCandle.open;
-      const candleBaixa = lastCandle.close < lastCandle.open;
-
-      const longAbaixoResist = price < resistencia * 0.99;
-      const longAcimaSuporte = price > suporte * 1.01;
-      const shortAcimaSuporte = price > suporte * 0.99;
-      const shortAbaixoResist = price < resistencia * 0.99;
-      const rsiPrev = rsi(closes.slice(0,-1),14);
-      const pricePrev = closes[closes.length-2];
-      const divergenciaBaixa = (price > pricePrev && _rsi < rsiPrev);
-      const divergenciaAlta = (price < pricePrev && _rsi > rsiPrev);
-
-      let signal = 'AGUARDAR', reason = '';
-      if (!currentPosition) {
-        if (tendenciaAlta && emasAlinhadasCompra && dist21 < distMax && _rsi>35 && _rsi<65 && (!exigeCandle || candleAlta) && longAcimaSuporte && longAbaixoResist && !divergenciaBaixa) {
-          signal = 'COMPRAR'; reason = fastMode ? 'Modo Rápido: Compra' : 'Tend. Alta + Pullback EMA21';
-        } else if (tendenciaBaixa && emasAlinhadasVenda && dist21 < distMax && _rsi>35 && _rsi<65 && (!exigeCandle || candleBaixa) && shortAcimaSuporte && shortAbaixoResist && !divergenciaAlta) {
-          signal = 'VENDER'; reason = fastMode ? 'Modo Rápido: Venda' : 'Tend. Baixa + Repuxo EMA21';
-        } else {
-          // Explicar motivo
-          if (!tendenciaAlta && !tendenciaBaixa) reason = 'Tendência indefinida';
-          else if (tendenciaAlta && !emasAlinhadasCompra) reason = 'EMAs não alinhadas para compra';
-          else if (tendenciaBaixa && !emasAlinhadasVenda) reason = 'EMAs não alinhadas para venda';
-          else if (dist21 >= distMax) reason = `Dist. EMA21 ${(dist21*100).toFixed(1)}% > ${(distMax*100).toFixed(1)}%`;
-          else if (_rsi <= 35 || _rsi >= 65) reason = `RSI ${_rsi.toFixed(1)} fora de 35-65`;
-          else if (exigeCandle && !candleAlta && tendenciaAlta) reason = 'Candle não é de alta';
-          else if (exigeCandle && !candleBaixa && tendenciaBaixa) reason = 'Candle não é de baixa';
-          else reason = 'Condições não atendidas';
-        }
-      } else reason = `Posição aberta (${currentPosition.side})`;
-
-      setText('reasonDisplay', reason);
-      return { signal, reason, e9, e21, _rsi, price, atr:_atr, sar:_sar };
-    }
-
-    function analisarEAtualizarUI() {
-      if (!series.length) return;
-      const a = analyze();
-      const el = document.getElementById('signalDisplay');
-      el.className = 'signal-text ' + (a.signal==='COMPRAR'?'buy':a.signal==='VENDER'?'sell':'wait');
-      el.innerText = a.signal;
-      renderPosition();
-      if (autoTradeEnabled && a.price) checkAndExecuteTrade(a);
-    }
-
-    async function checkAndExecuteTrade(analise) {
-      if (!autoTradeEnabled || Date.now() < pauseUntil || Date.now() < cooldownUntil) return;
-      const { signal, price, atr: atrVal, sar: sarArr } = analise;
-      if (currentPosition) {
-        if (currentPosition.side==='BUY') {
-          const tpPrice = currentPosition.entryPrice + STRATEGY.tpAtr * atrVal;
-          const slPrice = currentPosition.entryPrice - STRATEGY.slAtr * atrVal;
-          if (STRATEGY.useTrailing && price > trailingHighest) trailingHighest = price;
-          if (STRATEGY.useTrailing && trailingActive && price <= trailingHighest * 0.999) { await executarOrdem('SELL'); return; }
-          if (STRATEGY.useSAR && sarArr.length && price < sarArr[sarArr.length-1].value) { await executarOrdem('SELL'); return; }
-          if (price >= tpPrice || price <= slPrice) { await executarOrdem('SELL'); return; }
-        } else {
-          const tpPrice = currentPosition.entryPrice - STRATEGY.tpAtr * atrVal;
-          const slPrice = currentPosition.entryPrice + STRATEGY.slAtr * atrVal;
-          if (STRATEGY.useTrailing && price < trailingLowest) trailingLowest = price;
-          if (STRATEGY.useTrailing && trailingActive && price >= trailingLowest * 1.001) { await executarOrdem('BUY'); return; }
-          if (STRATEGY.useSAR && sarArr.length && price > sarArr[sarArr.length-1].value) { await executarOrdem('BUY'); return; }
-          if (price <= tpPrice || price >= slPrice) { await executarOrdem('BUY'); return; }
-        }
-        return;
-      }
-      if (Date.now() - lastOrderTime < STRATEGY.minOrderInterval * 1000) return;
-      if (signal === 'COMPRAR') await executarOrdem('BUY');
-      else if (signal === 'VENDER') await executarOrdem('SELL');
-    }
-
-    function resetTrailing() { trailingActive = false; trailingHighest = 0; trailingLowest = Infinity; }
-
-    function simularCompra(price, qty) {
-      if (!currentPosition) {
-        if (saldoUSDT < price*qty) { log('❌ Saldo insuficiente'); return false; }
-        saldoUSDT -= price*qty; qtyAtivo = qty;
-        currentPosition = { side:'BUY', qty, entryPrice: price };
-        adicionarMarcador('BUY'); log(`🟢 LONG ${qty.toFixed(6)} a ${price.toFixed(2)}`); bipCompra();
-        resetTrailing(); trailingHighest = price;
-      } else if (currentPosition.side==='SELL') {
-        const lucro = (currentPosition.entryPrice - price) * currentPosition.qty;
-        saldoUSDT += currentPosition.qty * currentPosition.entryPrice + lucro;
-        adicionarTradeHistorico({ tipo:'FECHAR SHORT', qtd:currentPosition.qty, entrada:currentPosition.entryPrice, saida:price, lucro, data:new Date() });
-        log(`🔵 FECHAMENTO SHORT +${lucro.toFixed(2)} USDT`); bipCompra();
-        qtyAtivo = 0; currentPosition = null; cooldownUntil = Date.now()+30000; resetTrailing();
-        adicionarMarcador('BUY');
-      } else {
-        if (saldoUSDT < price*qty) { log('❌ Saldo insuficiente'); return false; }
-        saldoUSDT -= price*qty;
-        const total = currentPosition.qty*currentPosition.entryPrice + price*qty;
-        currentPosition.qty += qty; currentPosition.entryPrice = total / currentPosition.qty;
-        qtyAtivo = currentPosition.qty; adicionarMarcador('BUY'); log(`🟢 AUMENTO LONG +${qty.toFixed(6)}`); bipCompra();
-        trailingHighest = Math.max(trailingHighest, price);
-      }
-      atualizarSaldoUI(); renderPosition(); salvarEstado(); return true;
-    }
-
-    function simularVenda(price, qty) {
-      if (!currentPosition) {
-        const garantia = price*qty*0.5;
-        if (saldoUSDT < garantia) { log('❌ Saldo insuficiente'); return false; }
-        saldoUSDT -= garantia; qtyAtivo = -qty;
-        currentPosition = { side:'SELL', qty, entryPrice: price };
-        adicionarMarcador('SELL'); log(`🔴 SHORT ${qty.toFixed(6)} a ${price.toFixed(2)}`); bipVenda();
-        resetTrailing(); trailingLowest = price;
-      } else if (currentPosition.side==='BUY') {
-        const lucro = (price - currentPosition.entryPrice) * currentPosition.qty;
-        saldoUSDT += price * currentPosition.qty;
-        adicionarTradeHistorico({ tipo:'FECHAR LONG', qtd:currentPosition.qty, entrada:currentPosition.entryPrice, saida:price, lucro, data:new Date() });
-        log(`🔴 FECHAMENTO LONG +${lucro.toFixed(2)} USDT`); bipVenda();
-        qtyAtivo = 0; currentPosition = null; cooldownUntil = Date.now()+30000; resetTrailing();
-        adicionarMarcador('SELL');
-      } else {
-        const garantia = price*qty*0.1;
-        if (saldoUSDT < garantia) { log('❌ Saldo insuficiente'); return false; }
-        saldoUSDT -= garantia;
-        const totalQty = currentPosition.qty + qty;
-        const totalVal = currentPosition.qty*currentPosition.entryPrice + qty*price;
-        currentPosition.qty = totalQty; currentPosition.entryPrice = totalVal/totalQty;
-        qtyAtivo = -currentPosition.qty; adicionarMarcador('SELL'); log(`🔴 AUMENTO SHORT +${qty.toFixed(6)}`); bipVenda();
-        trailingLowest = Math.min(trailingLowest, price);
-      }
-      atualizarSaldoUI(); renderPosition(); salvarEstado(); verificarMetaLucro(); return true;
-    }
-
-    async function executarOrdem(side) {
-      const orderBRL = +document.getElementById('orderQty').value || 300;
-      const price = series.length ? series[series.length-1].close : 0;
-      if (!price) { log('Preço indisponível'); return; }
-      const qtyBTC = orderBRL / usdBrlRate / price;
-      STRATEGY.orderQty = orderBRL;
-      STRATEGY.tpAtr = +document.getElementById('tpAtrMult').value;
-      STRATEGY.slAtr = +document.getElementById('slAtrMult').value;
-      STRATEGY.minOrderInterval = +document.getElementById('intervalInput').value;
-      STRATEGY.rsiMin = +document.getElementById('rsiMin').value;
-      STRATEGY.rsiMax = +document.getElementById('rsiMax').value;
-      STRATEGY.adxMin = +document.getElementById('adxMin').value;
-      STRATEGY.volMult = +document.getElementById('volMult').value;
-      STRATEGY.useTrailing = document.getElementById('useTrailingStop').checked;
-      STRATEGY.useSAR = document.getElementById('useSAR').checked;
-
-      if (currentPosition) {
-        const close = (currentPosition.side==='BUY' && side==='SELL') || (currentPosition.side==='SELL' && side==='BUY');
-        if (close) {
-          side==='BUY' ? simularCompra(price, currentPosition.qty) : simularVenda(price, currentPosition.qty);
-          lastOrderTime = Date.now(); return;
-        }
-      }
-      side==='BUY' ? simularCompra(price, qtyBTC) : simularVenda(price, qtyBTC);
-      lastOrderTime = Date.now();
-    }
-    window.executarOrdemManual = (side) => executarOrdem(side);
-
-    function renderPosition() {
-      const pnlEl = document.getElementById('pnlDisplay'), badge = document.getElementById('pnlPercentDisplay');
-      if (currentPosition) {
-        setText('position', currentPosition.side==='BUY'?'📈 LONG':'📉 SHORT');
-        setText('positionQty', Math.abs(currentPosition.qty).toFixed(6));
-        setText('entryPrice', currentPosition.entryPrice.toFixed(2));
-        const price = series.length ? series[series.length-1].close : 0;
-        let pnlUSDT=0, pnlPercent=0;
-        if (currentPosition.side==='BUY') { pnlUSDT=(price-currentPosition.entryPrice)*currentPosition.qty; pnlPercent=((price-currentPosition.entryPrice)/currentPosition.entryPrice)*100; }
-        else { pnlUSDT=(currentPosition.entryPrice-price)*currentPosition.qty; pnlPercent=((currentPosition.entryPrice-price)/currentPosition.entryPrice)*100; }
-        const cor = pnlPercent>=0?'#22c55e':'#ef4444';
-        pnlEl.style.color=cor; pnlEl.innerText=`${pnlPercent>=0?'+':''}${pnlPercent.toFixed(2)}%`;
-        badge.innerText=`${pnlPercent>=0?'+':''}${pnlPercent.toFixed(2)}%`; badge.style.color=cor;
-        setText('pnlUSDT', `${pnlUSDT>=0?'+':''}${pnlUSDT.toFixed(2)} USDT`);
-        setText('pnlBRL', `R$ ${(pnlUSDT*usdBrlRate).toFixed(2)}`);
-      } else {
-        setText('position','—'); setText('positionQty','—'); setText('entryPrice','—');
-        pnlEl.style.color='#fff'; pnlEl.innerText='—'; badge.innerText='0.00%';
-        setText('pnlUSDT','0.00 USDT'); setText('pnlBRL','R$ 0,00');
-      }
-    }
-
-    function atualizarSaldoUI() {
-      saldoUSDTInput.value = saldoUSDT.toFixed(2);
-      saldoBRLInput.value = (saldoUSDT * usdBrlRate).toFixed(2);
-    }
-
-    function adicionarTradeHistorico(t) { tradeHistory.unshift(t); atualizarPainelHistorico(); salvarEstado(); verificarMetaLucro(); }
-    function atualizarPainelHistorico() {
-      const cont = document.getElementById('history-log'), totalEl = document.getElementById('totalPnLRealizado');
-      if (!tradeHistory.length) { cont.innerHTML='<div class="small">Nenhuma operação fechada.</div>'; totalEl.innerText='R$ 0,00'; return; }
-      let total=0, html='';
-      tradeHistory.forEach(t=>{
-        total += t.lucro; const cls = t.lucro>=0?'profit':'loss';
-        html += `<div class="trade-item"><b>${t.tipo}</b> ${t.qtd.toFixed(6)}<br>Entrada ${t.entrada.toFixed(2)} → Saída ${t.saida.toFixed(2)}<br><span class="${cls}">${t.lucro>=0?'+':''}${t.lucro.toFixed(2)} USDT</span><br><small>BRL: R$ ${(t.lucro*usdBrlRate).toFixed(2)}</small></div>`;
-      });
-      cont.innerHTML = html;
-      totalEl.innerText = `R$ ${(total*usdBrlRate).toFixed(2)}`;
-    }
-    window.limparHistoricoTrades = () => { tradeHistory=[]; atualizarPainelHistorico(); salvarEstado(); };
-
-    function verificarMetaLucro() {
-      const meta = +document.getElementById('profitGoalBRL').value || 200;
-      const lucroBRL = tradeHistory.reduce((acc,t)=>acc + t.lucro*usdBrlRate, 0);
-      if (lucroBRL >= meta && autoTradeEnabled) {
-        document.getElementById('autoTradeEnabled').checked = false;
-        autoTradeEnabled = false; salvarEstado();
-        log(`🏁 Meta de R$ ${meta.toFixed(2)} atingida! Auto-Trade pausado.`);
-        pararConexaoWebSocket(true);
-      }
-    }
-
-    // ----- Simulação de depósito/saque -----
-    window.simularPix = (tipo) => {
-      const valor = parseFloat(document.getElementById('pixValue').value);
-      if (!valor || valor <= 0) { log('Valor inválido para Pix'); return; }
-      if (tipo === 'deposito') {
-        const usdtAdicionado = valor / usdBrlRate;
-        saldoUSDT += usdtAdicionado;
-        log(`💵 Pix depositado: R$ ${valor.toFixed(2)} → +${usdtAdicionado.toFixed(2)} USDT`);
-      } else {
-        const usdtSacado = valor / usdBrlRate;
-        if (saldoUSDT < usdtSacado) { log('Saldo USDT insuficiente para saque'); return; }
-        saldoUSDT -= usdtSacado;
-        log(`💸 Pix sacado: R$ ${valor.toFixed(2)} → -${usdtSacado.toFixed(2)} USDT`);
-      }
-      atualizarSaldoUI(); salvarEstado();
-    };
-
-    window.simularUSDT = (tipo) => {
-      const valor = parseFloat(document.getElementById('usdtValue').value);
-      if (!valor || valor <= 0) { log('Quantia inválida para USDT'); return; }
-      if (tipo === 'deposito') {
-        saldoUSDT += valor;
-        log(`💵 USDT depositado: +${valor.toFixed(2)} USDT`);
-      } else {
-        if (saldoUSDT < valor) { log('Saldo USDT insuficiente para saque'); return; }
-        saldoUSDT -= valor;
-        log(`💸 USDT sacado: -${valor.toFixed(2)} USDT`);
-      }
-      atualizarSaldoUI(); salvarEstado();
-    };
-    // ----------------------------------------
-
-    // WebSocket
-    function getWsUrl() {
-      return currentExchange==='bybit' ? 'wss://stream.bybit.com/v5/public/spot' : `wss://stream.binance.com:9443/ws/${currentSymbol.toLowerCase()}@kline_${currentInterval}`;
-    }
-
-    async function fetchHistoricalKlines(force = false) {
-      if (series.length && !force) {
-        candleSeries.setData(series); atualizarLinhasEMA(); analisarEAtualizarUI(); calcularSuporteResistencia(); iniciarTimerVela();
-        return;
-      }
-      setText('chartStatus','⏳');
-      try {
-        const url = currentExchange==='bybit' ? `https://api.bybit.com/v5/market/kline?category=spot&symbol=${currentSymbol}&interval=${currentInterval}&limit=200` : `https://api.binance.com/api/v3/klines?symbol=${currentSymbol}&interval=${currentInterval==='60'?'1h':currentInterval+'m'}&limit=200`;
-        const resp = await fetch(url);
-        const data = await resp.json();
-        if (currentExchange==='bybit') {
-          series = data.result.list.reverse().map(k=>({ time: Math.floor(+k[0]/1000), open:+k[1], high:+k[2], low:+k[3], close:+k[4], volume: +k[5] }));
-        } else {
-          series = data.map(k=>({ time: Math.floor(k[0]/1000), open:+k[1], high:+k[2], low:+k[3], close:+k[4], volume: +k[5] }));
-        }
-        candleSeries.setData(series); setText('chartStatus','✅');
-      } catch(e) { setText('chartStatus','❌'); }
-      volumeHistory = series.map(s=>s.volume);
-      atualizarLinhasEMA(); analisarEAtualizarUI(); calcularSuporteResistencia(); iniciarTimerVela(); salvarEstado();
-    }
-
-    function updateRealtime(kline) {
-      const t = Math.floor(+(kline.start||kline.t)/1000);
-      const c = { time:t, open:+kline.open, high:+kline.high, low:+kline.low, close:+kline.close, volume: +kline.volume };
-      candleSeries.update(c);
-      const last = series[series.length-1];
-      if (last && last.time===t) series[series.length-1] = c;
-      else { series.push(c); if(series.length>200) series.shift(); volumeHistory.push(c.volume); if(volumeHistory.length>200) volumeHistory.shift(); }
-      atualizarLinhasEMA(); analisarEAtualizarUI(); calcularSuporteResistencia();
-    }
-
-    function conectarWebSocket() {
-      if (ws) { ws.close(); ws = null; }
-      if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-      currentExchange = document.getElementById('exchangeSelect').value;
-      currentSymbol = document.getElementById('symbolSelect').value;
-      currentInterval = document.getElementById('intervalSelect').value;
-      document.getElementById('intervalDisplay').innerText = currentInterval + (currentInterval==='60'?'h':'m');
-      atualizarUIExchange();
-      if (!chart) initChart();
-      manualDisconnect = false;
-
-      if (series.length) {
-        candleSeries.setData(series); atualizarLinhasEMA(); analisarEAtualizarUI(); calcularSuporteResistencia(); iniciarTimerVela();
-      } else {
-        fetchHistoricalKlines(true);
-      }
-
-      setText('connStatus','⏳ Conectando...');
-      try {
-        ws = new WebSocket(getWsUrl());
-        ws.onopen = () => {
-          setText('connStatus','🟢 ONLINE');
-          if (currentExchange==='bybit') ws.send(JSON.stringify({op:'subscribe', args:[`kline.${currentInterval}.${currentSymbol}`]}));
-          log(`✅ Conectado (${currentExchange.toUpperCase()})`); reconnectAttempts=0;
-          document.getElementById('connectBtn').innerHTML = '🔴 Desconectar';
-        };
-        ws.onmessage = (e) => {
-          try {
-            const d = JSON.parse(e.data);
-            if (currentExchange==='bybit' && d.topic?.startsWith('kline')) updateRealtime(d.data[0]);
-            else if (currentExchange==='binance' && d.k) updateRealtime({ start:d.k.t, open:d.k.o, high:d.k.h, low:d.k.l, close:d.k.c, volume:d.k.v });
-          } catch{}
-        };
-        ws.onerror = () => setText('connStatus','🔴 ERRO');
-        ws.onclose = () => {
-          setText('connStatus','🟡 Offline');
-          document.getElementById('connectBtn').innerHTML = '🔌 Conectar';
-          if (!manualDisconnect && autoTradeEnabled && reconnectAttempts < 10) {
-            const delay = Math.min(30000, 1000 * Math.pow(1.5, reconnectAttempts));
-            reconnectAttempts++;
-            document.getElementById('reconnectAttemptsDisplay').innerText = `⏳ Reconectando em ${Math.round(delay/1000)}s`;
-            wsReconnectTimer = setTimeout(() => { if(autoTradeEnabled && !manualDisconnect) conectarWebSocket(); }, delay);
-          }
-        };
-      } catch(e) { setText('connStatus','❌ URL inválida'); }
-    }
-
-    window.toggleConnection = () => {
-      if (ws && ws.readyState===WebSocket.OPEN) pararConexaoWebSocket(true);
-      else conectarWebSocket();
-    };
-
-    function pararConexaoWebSocket(manualmente=true) {
-      manualDisconnect = manualDisconnect;
-      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
-      if (ws) { ws.close(); ws = null; }
-      reconnectAttempts = 0;
-      setText('connStatus','⏹️ Desconectado');
-      document.getElementById('connectBtn').innerHTML = '🔌 Conectar';
-    }
-
-    window.pararAutoTrade = () => { autoTradeEnabled = false; document.getElementById('autoTradeEnabled').checked = false; log('⛔ Auto-Trade DESATIVADO'); pararConexaoWebSocket(true); salvarEstado(); };
-    window.pausarPorNoticias = () => { pauseUntil = Date.now() + 30*60*1000; log('⏸️ Pausado por 30 min'); };
-
-    // Timer
-    let timerInterval;
-    function atualizarTimerVela() {
-      if (!series.length) { setText('timerDisplay','⏱️ --:--'); return; }
-      const ultimo = series[series.length-1], now = Math.floor(Date.now()/1000);
-      let intv = 60;
-      if (currentInterval==='1') intv=60; else if (currentInterval==='3') intv=180; else if (currentInterval==='5') intv=300; else if (currentInterval==='15') intv=900; else if (currentInterval==='30') intv=1800; else if (currentInterval==='60') intv=3600;
-      const seg = Math.max(0, ultimo.time + intv - now);
-      setText('timerDisplay', `⏱️ ${Math.floor(seg/60).toString().padStart(2,'0')}:${(seg%60).toString().padStart(2,'0')}`);
-    }
-    function iniciarTimerVela() { if(timerInterval) clearInterval(timerInterval); atualizarTimerVela(); timerInterval = setInterval(atualizarTimerVela, 500); }
-
-    // Event listeners
-    document.getElementById('exchangeSelect').addEventListener('change', ()=>{ currentExchange = document.getElementById('exchangeSelect').value; atualizarUIExchange(); salvarEstado(); });
-    document.getElementById('autoTradeEnabled').addEventListener('change', e => {
-      autoTradeEnabled = e.target.checked; salvarEstado();
-      log(autoTradeEnabled ? '🤖 Auto-Trade ATIVADO' : '⏸️ Auto-Trade DESATIVADO');
-      if (autoTradeEnabled && (!ws || ws.readyState!==WebSocket.OPEN)) conectarWebSocket();
-      else if (!autoTradeEnabled) pararConexaoWebSocket(true);
-    });
-    ['orderQty','tpAtrMult','slAtrMult','profitGoalBRL','intervalInput','rsiMin','rsiMax','adxMin','volMult','useTrailingStop','useSAR','safeHoursFilter','fastMode','testnetMode'].forEach(id => document.getElementById(id).addEventListener('change', salvarEstado));
-    document.getElementById('symbolSelect').addEventListener('change', salvarEstado);
-    document.getElementById('intervalSelect').addEventListener('change', function() {
-      currentInterval = this.value;
-      document.getElementById('intervalDisplay').innerText = currentInterval + (currentInterval==='60'?'h':'m');
-      series = []; volumeHistory = [];
-      salvarEstado();
-      if (ws && ws.readyState===WebSocket.OPEN) { ws.close(); conectarWebSocket(); }
-      else if (autoTradeEnabled) conectarWebSocket();
-      else fetchHistoricalKlines(true);
-    });
-    document.getElementById('refreshChartBtn').onclick = () => fetchHistoricalKlines(true);
-
-    window.atualizarSaldoReal = () => log('Configure as chaves de API para sincronizar com a exchange.');
-
-    // Inicialização
-    initChart();
-    const carregou = carregarEstado();
-    if (!carregou) { saldoUSDTInput.value = saldoUSDT.toFixed(2); saldoBRLInput.value = (saldoUSDT * usdBrlRate).toFixed(2); }
-    STRATEGY = {
-      orderQty: +document.getElementById('orderQty').value,
-      tpAtr: +document.getElementById('tpAtrMult').value,
-      slAtr: +document.getElementById('slAtrMult').value,
-      minOrderInterval: +document.getElementById('intervalInput').value,
-      profitGoalBRL: +document.getElementById('profitGoalBRL').value,
-      rsiMin: +document.getElementById('rsiMin').value,
-      rsiMax: +document.getElementById('rsiMax').value,
-      adxMin: +document.getElementById('adxMin').value,
-      volMult: +document.getElementById('volMult').value,
-      useTrailing: document.getElementById('useTrailingStop').checked,
-      useSAR: document.getElementById('useSAR').checked,
-      safeHours: document.getElementById('safeHoursFilter').checked,
-      fastMode: document.getElementById('fastMode').checked
-    };
-    autoTradeEnabled = document.getElementById('autoTradeEnabled').checked;
-    atualizarSaldoUI(); atualizarPainelHistorico(); renderPosition();
-    if (series.length) { candleSeries.setData(series); volumeHistory = series.map(s=>s.volume); atualizarLinhasEMA(); analisarEAtualizarUI(); calcularSuporteResistencia(); iniciarTimerVela(); }
-    if (autoTradeEnabled) conectarWebSocket(); else if (!series.length) fetchHistoricalKlines(true);
-
-    window.addEventListener('beforeunload', ()=>salvarEstado());
-    setInterval(async ()=>{
-      try { const r=await fetch('https://economia.awesomeapi.com.br/last/USD-BRL'); usdBrlRate = parseFloat((await r.json()).USDBRL.bid); } catch{}
-    }, 300000);
-  })();
+function atr(highs, lows, closes, period = 14) {
+  if (highs.length < period + 1) return null;
+  let tr = 0;
+  for (let i = highs.length - period; i < highs.length; i++) {
+    tr += Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1]));
+  }
+  return tr / period;
 }
-</script>
-</body>
-  </html>
+
+function adx(highs, lows, closes, period = 14) {
+  if (closes.length < period * 2) return null;
+  const tr = [], plusDM = [], minusDM = [];
+  for (let i = 1; i < closes.length; i++) {
+    const h = highs[i], l = lows[i];
+    const ph = highs[i - 1], pl = lows[i - 1];
+    const up = ph < h ? h - ph : 0;
+    const down = pl > l ? pl - l : 0;
+    tr.push(Math.max(h - l, Math.abs(h - closes[i - 1]), Math.abs(l - closes[i - 1])));
+    plusDM.push(up > down ? up : 0);
+    minusDM.push(down > up ? down : 0);
+  }
+  let atrSmooth = tr.slice(0, period).reduce((a, b) => a + b, 0);
+  let plusSmooth = plusDM.slice(0, period).reduce((a, b) => a + b, 0);
+  let minusSmooth = minusDM.slice(0, period).reduce((a, b) => a + b, 0);
+  for (let i = period; i < tr.length; i++) {
+    atrSmooth = (atrSmooth * (period - 1) + tr[i]) / period;
+    plusSmooth = (plusSmooth * (period - 1) + plusDM[i]) / period;
+    minusSmooth = (minusSmooth * (period - 1) + minusDM[i]) / period;
+  }
+  if (atrSmooth === 0) return 0;
+  const diPlus = (plusSmooth / atrSmooth) * 100;
+  const diMinus = (minusSmooth / atrSmooth) * 100;
+  if (diPlus + diMinus === 0) return 0;
+  return Math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100;
+}
+
+function sar(highs, lows, closes, accel = 0.02, maxAccel = 0.2) {
+  if (highs.length < 2) return [];
+  let isLong = closes[1] > closes[0];
+  let af = accel;
+  let ep = isLong ? highs[0] : lows[0];
+  const result = [{ value: isLong ? lows[0] - (highs[0] - lows[0]) * 0.5 : highs[0] + (highs[0] - lows[0]) * 0.5 }];
+  for (let i = 1; i < closes.length; i++) {
+    let sarVal = result[i - 1].value + af * (ep - result[i - 1].value);
+    if (isLong) {
+      if (lows[i] < sarVal) {
+        isLong = false;
+        sarVal = ep;
+        af = accel;
+        ep = lows[i];
+      } else {
+        if (highs[i] > ep) {
+          ep = highs[i];
+          af = Math.min(af + accel, maxAccel);
+        }
+      }
+    } else {
+      if (highs[i] > sarVal) {
+        isLong = true;
+        sarVal = ep;
+        af = accel;
+        ep = highs[i];
+      } else {
+        if (lows[i] < ep) {
+          ep = lows[i];
+          af = Math.min(af + accel, maxAccel);
+        }
+      }
+    }
+    result.push({ value: sarVal });
+  }
+  return result;
+}
+
+function analyze() {
+  if (series.length < 50) return { signal: 'AGUARDAR', reason: 'Poucas velas' };
+  const closes = series.map(c => c.close);
+  const price = closes[closes.length - 1];
+  const e9 = ema(closes, 9), e21 = ema(closes, 21), e50 = ema(closes, 50);
+  const _rsi = rsi(closes);
+  const _adx = adx(series.map(c => c.high), series.map(c => c.low), closes);
+  const _atr = atr(series.map(c => c.high), series.map(c => c.low), closes);
+  const volumeAtual = series[series.length - 1].volume || 0;
+  const avgVolume = volumeHistory.slice(-10).reduce((a, b) => a + b, 0) / 10 || 0;
+  const prev50 = series.length >= 51 ? ema(closes.slice(0, -1), 50) : null;
+  const _sar = sar(series.map(c => c.high), series.map(c => c.low), closes);
+
+  if (strategy.safeHours && new Date().getUTCHours() < 6) return { signal: 'AGUARDAR', reason: 'Horário 00-06 UTC' };
+  if (!e9 || !e21 || !e50 || _rsi === null || _adx === null || !_atr) return { signal: 'AGUARDAR', reason: 'Indicadores incompletos' };
+  if (!prev50) return { signal: 'AGUARDAR', reason: 'Aguardando EMA50 anterior' };
+
+  const fast = fastMode;
+  const adxMin = fast ? 15 : strategy.adxMin;
+  const distMax = fast ? 0.03 : 0.015;
+  const exigeCandle = !fast;
+  const exigeVolume = !fast;
+
+  if (_adx < adxMin) return { signal: 'AGUARDAR', reason: `ADX baixo (${_adx.toFixed(1)})` };
+  if (exigeVolume && avgVolume > 0 && volumeAtual < strategy.volMult * avgVolume) return { signal: 'AGUARDAR', reason: 'Volume fraco' };
+
+  const tendAlta = e50 > prev50 && price > e50;
+  const tendBaixa = e50 < prev50 && price < e50;
+  const emasCompra = e9 > e21 && e21 > e50;
+  const emasVenda = e9 < e21 && e21 < e50;
+  const dist21 = Math.abs(price - e21) / price;
+  const lastCandle = series[series.length - 1];
+  const candleAlta = lastCandle.close > lastCandle.open;
+  const candleBaixa = !candleAlta;
+
+  if (!position) {
+    if (tendAlta && emasCompra && dist21 < distMax && _rsi > strategy.rsiMin && _rsi < strategy.rsiMax && (!exigeCandle || candleAlta))
+      return { signal: 'COMPRAR', reason: 'Sinal de compra' };
+    if (tendBaixa && emasVenda && dist21 < distMax && _rsi > strategy.rsiMin && _rsi < strategy.rsiMax && (!exigeCandle || candleBaixa))
+      return { signal: 'VENDER', reason: 'Sinal de venda' };
+  }
+  return { signal: 'AGUARDAR', reason: position ? 'Posição aberta' : 'Filtros não atendidos' };
+}
+
+function executar(signal, price) {
+  if (!price || Date.now() < lastOrderTime + strategy.minInterval * 1000) return;
+  const orderBRL = strategy.orderQty;
+  const qty = orderBRL / 5.20 / price;
+  if (signal === 'BUY') {
+    if (!position) {
+      if (saldo < price * qty) return;
+      saldo -= price * qty;
+      position = { side: 'BUY', qty, entryPrice: price };
+      log(`🟢 COMPRA ${qty.toFixed(6)} BTC a ${price.toFixed(2)}`);
+    } else if (position.side === 'SELL') {
+      const lucro = (position.entryPrice - price) * position.qty;
+      saldo += position.qty * position.entryPrice + lucro;
+      log(`🔵 FECHOU SHORT +${lucro.toFixed(2)} USDT`);
+      position = null;
+    }
+  } else if (signal === 'SELL') {
+    if (!position) {
+      const garantia = price * qty * 0.5;
+      if (saldo < garantia) return;
+      saldo -= garantia;
+      position = { side: 'SELL', qty, entryPrice: price };
+      log(`🔴 VENDA ${qty.toFixed(6)} BTC a ${price.toFixed(2)}`);
+    } else if (position.side === 'BUY') {
+      const lucro = (price - position.entryPrice) * position.qty;
+      saldo += price * position.qty;
+      log(`🔴 FECHOU LONG +${lucro.toFixed(2)} USDT`);
+      position = null;
+    }
+  }
+  lastOrderTime = Date.now();
+}
+
+function step() {
+  if (!series.length) return;
+  const price = series[series.length - 1].close;
+  const analise = analyze();
+  if (autoTrade && analise.signal !== 'AGUARDAR') {
+    executar(analise.signal, price);
+  }
+  io.emit('state', { saldo, preco: price?.toFixed(2), signal: analise.signal });
+}
+
+function log(msg) {
+  console.log(msg);
+  io.emit('log', msg);
+}
+
+function connectWS() {
+  const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@kline_1m');
+  ws.on('open', () => log('Conectado Binance'));
+  ws.on('message', (data) => {
+    const k = JSON.parse(data).k;
+    if (!k.x) return;
+    const candle = { time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v };
+    const last = series[series.length - 1];
+    if (last && last.time === candle.time) series[series.length - 1] = candle;
+    else {
+      series.push(candle);
+      if (series.length > 200) series.shift();
+      volumeHistory.push(candle.volume);
+      if (volumeHistory.length > 200) volumeHistory.shift();
+    }
+    step();
+  });
+  ws.on('close', () => setTimeout(connectWS, 5000));
+}
+
+(async () => {
+  try {
+    const { data } = await axios.get('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=200');
+    series = data.map(k => ({ time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] }));
+    volumeHistory = series.map(c => c.volume);
+    log('Histórico carregado');
+  } catch (e) { log('Erro ao carregar histórico'); }
+  connectWS();
+})();
+
+io.on('connection', (socket) => {
+  socket.on('toggleAuto', () => { autoTrade = !autoTrade; log(`AutoTrade ${autoTrade ? 'ON' : 'OFF'}`); });
+  socket.on('toggleFast', () => { fastMode = !fastMode; log(`Modo Rápido ${fastMode ? 'ON' : 'OFF'}`); });
+});
+
+server.listen(PORT, () => console.log(`Rodando na porta ${PORT}`));
