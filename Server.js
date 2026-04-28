@@ -1,39 +1,16 @@
 const express = require('express');
 const http = require('http');
+const { Server } = require('socket.io');
 const WebSocket = require('ws');
 const axios = require('axios');
 const fs = require('fs');
-const path = require('path');
 
 const PORT = process.env.PORT || 3000;
-const STORAGE_FILE = './state.json';
-
-let series = [];
-let volumeHistory = [];
-let saldo = 10000;
-let position = null;
-let autoTrade = false;
-let fastMode = false;
-let strategy = {
-  orderQty: 300,
-  tpAtr: 3.0,
-  slAtr: 2.0,
-  adxMin: 20,
-  rsiMin: 35,
-  rsiMax: 65,
-  safeHours: true,
-  useTrailing: true,
-  useSAR: false,
-  volMult: 1.2,
-  profitGoal: 200,
-  minInterval: 10
-};
-let lastOrderTime = 0;
-
 const app = express();
 const server = http.createServer(app);
-const io = require('socket.io')(server);
+const io = new Server(server);
 
+// Servir arquivos estáticos
 app.use(express.static('public'));
 if (!fs.existsSync('public')) fs.mkdirSync('public');
 fs.writeFileSync('public/index.html', `
@@ -69,26 +46,123 @@ function toggleAuto(){ socket.emit('toggleAuto'); }
 function toggleFast(){ socket.emit('toggleFast'); }
 </script></body></html>`);
 
-function ema(arr, n) { if (arr.length < n) return null; const k = 2/(n+1); let e = arr.slice(0,n).reduce((a,b)=>a+b,0)/n; for (let i=n;i<arr.length;i++) e = arr[i]*k + e*(1-k); return e; }
-function rsi(closes, n=14) { if (closes.length<n+1) return null; let gains=0,losses=0; for (let i=closes.length-n;i<closes.length;i++){ const diff=closes[i]-closes[i-1]; if(diff>=0)gains+=diff; else losses-=diff; } const ag=gains/n,al=losses/n; if(al===0)return 100; return 100-(100/(1+(ag/al)));}
-function atr(highs,lows,closes,period=14) { if (highs.length<period+1) return null; let tr=0; for (let i=highs.length-period;i<highs.length;i++) tr += Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1])); return tr/period; }
-function adx(highs,lows,closes,period=14) { if (closes.length<period*2) return 15; return 15; }
-function sar(highs,lows,closes, accel=0.02, maxAccel=0.2) { if (highs.length<2) return []; let isLong=closes[1]>closes[0], af=accel, ep=isLong?highs[0]:lows[0], res=[{value:isLong?lows[0]-(highs[0]-lows[0])*0.5:highs[0]+(highs[0]-lows[0])*0.5}]; for (let i=1;i<closes.length;i++){ let s=res[i-1].value+af*(ep-res[i-1].value); if(isLong){ if(lows[i]<s){ isLong=false; s=ep; af=accel; ep=lows[i]; } else{ if(highs[i]>ep){ ep=highs[i]; af=Math.min(af+accel,maxAccel); } } } else { if(highs[i]>s){ isLong=true; s=ep; af=accel; ep=highs[i]; } else{ if(lows[i]<ep){ ep=lows[i]; af=Math.min(af+accel,maxAccel); } } } res.push({value:s}); } return res; }
+// Estado do robô
+let series = [];
+let volumeHistory = [];
+let saldo = 10000;
+let position = null;
+let autoTrade = false;
+let fastMode = false;
+let strategy = {
+  orderQty: 300,
+  tpAtr: 3.0,
+  slAtr: 2.0,
+  adxMin: 20,
+  rsiMin: 35,
+  rsiMax: 65,
+  safeHours: true,
+  useTrailing: true,
+  useSAR: false,
+  volMult: 1.2,
+  profitGoal: 200,
+  minInterval: 10
+};
+let lastOrderTime = 0;
+
+// Indicadores
+function ema(arr, n) {
+  if (arr.length < n) return null;
+  const k = 2 / (n + 1);
+  let e = arr.slice(0, n).reduce((a, b) => a + b, 0) / n;
+  for (let i = n; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
+  return e;
+}
+function rsi(closes, n = 14) {
+  if (closes.length < n + 1) return null;
+  let gains = 0, losses = 0;
+  for (let i = closes.length - n; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff; else losses -= diff;
+  }
+  const ag = gains / n, al = losses / n;
+  if (al === 0) return 100;
+  return 100 - (100 / (1 + (ag / al)));
+}
+function atr(highs, lows, closes, period = 14) {
+  if (highs.length < period + 1) return null;
+  let tr = 0;
+  for (let i = highs.length - period; i < highs.length; i++) {
+    tr += Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1]));
+  }
+  return tr / period;
+}
+function adx(highs, lows, closes, period = 14) {
+  if (closes.length < period * 2) return null;
+  const tr = [], plusDM = [], minusDM = [];
+  for (let i = 1; i < closes.length; i++) {
+    const h = highs[i], l = lows[i];
+    const ph = highs[i - 1], pl = lows[i - 1];
+    const up = ph < h ? h - ph : 0;
+    const down = pl > l ? pl - l : 0;
+    tr.push(Math.max(h - l, Math.abs(h - closes[i - 1]), Math.abs(l - closes[i - 1])));
+    plusDM.push(up > down && up > 0 ? up : 0);
+    minusDM.push(down > up && down > 0 ? down : 0);
+  }
+  let atrSmooth = tr.slice(0, period).reduce((a, b) => a + b, 0);
+  let plusSmooth = plusDM.slice(0, period).reduce((a, b) => a + b, 0);
+  let minusSmooth = minusDM.slice(0, period).reduce((a, b) => a + b, 0);
+  for (let i = period; i < tr.length; i++) {
+    atrSmooth = (atrSmooth * (period - 1) + tr[i]) / period;
+    plusSmooth = (plusSmooth * (period - 1) + plusDM[i]) / period;
+    minusSmooth = (minusSmooth * (period - 1) + minusDM[i]) / period;
+  }
+  if (atrSmooth === 0) return 0;
+  const diPlus = (plusSmooth / atrSmooth) * 100;
+  const diMinus = (minusSmooth / atrSmooth) * 100;
+  if (diPlus + diMinus === 0) return 0;
+  return Math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100;
+}
+function sar(highs, lows, closes, accel = 0.02, maxAccel = 0.2) {
+  if (highs.length < 2) return [];
+  let isLong = closes[1] > closes[0];
+  let af = accel;
+  let ep = isLong ? highs[0] : lows[0];
+  const result = [{ value: isLong ? lows[0] - (highs[0] - lows[0]) * 0.5 : highs[0] + (highs[0] - lows[0]) * 0.5 }];
+  for (let i = 1; i < closes.length; i++) {
+    let sarVal = result[i - 1].value + af * (ep - result[i - 1].value);
+    if (isLong) {
+      if (lows[i] < sarVal) {
+        isLong = false; sarVal = ep; af = accel; ep = lows[i];
+      } else {
+        if (highs[i] > ep) { ep = highs[i]; af = Math.min(af + accel, maxAccel); }
+      }
+    } else {
+      if (highs[i] > sarVal) {
+        isLong = true; sarVal = ep; af = accel; ep = highs[i];
+      } else {
+        if (lows[i] < ep) { ep = lows[i]; af = Math.min(af + accel, maxAccel); }
+      }
+    }
+    result.push({ value: sarVal });
+  }
+  return result;
+}
 
 function analyze() {
   if (series.length < 50) return { signal: 'AGUARDAR', reason: 'Poucas velas' };
-  const closes = series.map(c=>c.close);
-  const price = closes[closes.length-1];
-  const e9 = ema(closes,9), e21 = ema(closes,21), e50 = ema(closes,50);
-  const _rsi = rsi(closes), _adx = adx(series.map(c=>c.high),series.map(c=>c.low),closes);
-  const _atr = atr(series.map(c=>c.high),series.map(c=>c.low),closes);
-  const volumeAtual = series[series.length-1].volume||0;
-  const avgVolume = volumeHistory.slice(-10).reduce((a,b)=>a+b,0)/10||0;
-  const prev50 = series.length>=51 ? ema(closes.slice(0,-1),50) : null;
-  const _sar = sar(series.map(c=>c.high),series.map(c=>c.low),closes);
+  const closes = series.map(c => c.close);
+  const price = closes[closes.length - 1];
+  const e9 = ema(closes, 9), e21 = ema(closes, 21), e50 = ema(closes, 50);
+  const _rsi = rsi(closes);
+  const _adx = adx(series.map(c => c.high), series.map(c => c.low), closes);
+  const _atr = atr(series.map(c => c.high), series.map(c => c.low), closes);
+  const volumeAtual = series[series.length - 1].volume || 0;
+  const avgVolume = volumeHistory.slice(-10).reduce((a, b) => a + b, 0) / 10 || 0;
+  const prev50 = series.length >= 51 ? ema(closes.slice(0, -1), 50) : null;
 
   if (strategy.safeHours && new Date().getUTCHours() < 6) return { signal: 'AGUARDAR', reason: 'Horário 00-06 UTC' };
-  if (!e9||!e21||!e50||_rsi===null||_adx===null||!_atr) return { signal: 'AGUARDAR', reason: 'Indicadores incompletos' };
+  if (!e9 || !e21 || !e50 || _rsi === null || _adx === null || !_atr) return { signal: 'AGUARDAR', reason: 'Indicadores incompletos' };
+  if (!prev50) return { signal: 'AGUARDAR', reason: 'EMA50 anterior indisponível' };
 
   const fast = fastMode;
   const adxMin = fast ? 15 : strategy.adxMin;
@@ -97,51 +171,52 @@ function analyze() {
   const exigeVolume = !fast;
 
   if (_adx < adxMin) return { signal: 'AGUARDAR', reason: `ADX baixo (${_adx.toFixed(1)})` };
-  if (exigeVolume && avgVolume>0 && volumeAtual < strategy.volMult*avgVolume) return { signal: 'AGUARDAR', reason: 'Volume fraco' };
+  if (exigeVolume && avgVolume > 0 && volumeAtual < strategy.volMult * avgVolume) return { signal: 'AGUARDAR', reason: 'Volume fraco' };
 
   const tendAlta = e50 > prev50 && price > e50;
   const tendBaixa = e50 < prev50 && price < e50;
   const emasCompra = e9 > e21 && e21 > e50;
   const emasVenda = e9 < e21 && e21 < e50;
-  const dist21 = Math.abs(price - e21)/price;
-  const candleAlta = series[series.length-1].close > series[series.length-1].open;
+  const dist21 = Math.abs(price - e21) / price;
+  const lastCandle = series[series.length - 1];
+  const candleAlta = lastCandle.close > lastCandle.open;
   const candleBaixa = !candleAlta;
 
   if (!position) {
-    if (tendAlta && emasCompra && dist21 < distMax && _rsi>35 && _rsi<65 && (!exigeCandle || candleAlta))
+    if (tendAlta && emasCompra && dist21 < distMax && _rsi > strategy.rsiMin && _rsi < strategy.rsiMax && (!exigeCandle || candleAlta))
       return { signal: 'COMPRAR', reason: 'Sinal de compra' };
-    if (tendBaixa && emasVenda && dist21 < distMax && _rsi>35 && _rsi<65 && (!exigeCandle || candleBaixa))
+    if (tendBaixa && emasVenda && dist21 < distMax && _rsi > strategy.rsiMin && _rsi < strategy.rsiMax && (!exigeCandle || candleBaixa))
       return { signal: 'VENDER', reason: 'Sinal de venda' };
   }
-  return { signal: 'AGUARDAR', reason: position ? `Posição aberta` : 'Filtros' };
+  return { signal: 'AGUARDAR', reason: position ? 'Posição aberta' : 'Filtros não atendidos' };
 }
 
 function executar(signal, price) {
-  if (!price || Date.now() < lastOrderTime + strategy.minInterval*1000) return;
+  if (!price || Date.now() < lastOrderTime + strategy.minInterval * 1000) return;
   const orderBRL = strategy.orderQty;
   const qty = orderBRL / 5.20 / price;
   if (signal === 'BUY') {
     if (!position) {
-      if (saldo < price*qty) return;
-      saldo -= price*qty;
-      position = { side:'BUY', qty, entryPrice: price };
+      if (saldo < price * qty) return;
+      saldo -= price * qty;
+      position = { side: 'BUY', qty, entryPrice: price };
       log(`🟢 COMPRA ${qty.toFixed(6)} BTC a ${price.toFixed(2)}`);
-    } else if (position.side==='SELL') {
-      const lucro = (position.entryPrice - price)*position.qty;
-      saldo += position.qty*position.entryPrice + lucro;
+    } else if (position.side === 'SELL') {
+      const lucro = (position.entryPrice - price) * position.qty;
+      saldo += position.qty * position.entryPrice + lucro;
       log(`🔵 FECHOU SHORT +${lucro.toFixed(2)} USDT`);
       position = null;
     }
   } else if (signal === 'SELL') {
     if (!position) {
-      const garantia = price*qty*0.5;
+      const garantia = price * qty * 0.5;
       if (saldo < garantia) return;
       saldo -= garantia;
-      position = { side:'SELL', qty, entryPrice: price };
+      position = { side: 'SELL', qty, entryPrice: price };
       log(`🔴 VENDA ${qty.toFixed(6)} BTC a ${price.toFixed(2)}`);
-    } else if (position.side==='BUY') {
-      const lucro = (price - position.entryPrice)*position.qty;
-      saldo += price*position.qty;
+    } else if (position.side === 'BUY') {
+      const lucro = (price - position.entryPrice) * position.qty;
+      saldo += price * position.qty;
       log(`🔴 FECHOU LONG +${lucro.toFixed(2)} USDT`);
       position = null;
     }
@@ -151,7 +226,7 @@ function executar(signal, price) {
 
 function step() {
   if (!series.length) return;
-  const price = series[series.length-1].close;
+  const price = series[series.length - 1].close;
   const analise = analyze();
   if (autoTrade && analise.signal !== 'AGUARDAR') {
     executar(analise.signal, price);
@@ -170,28 +245,34 @@ function connectWS() {
   ws.on('message', (data) => {
     const k = JSON.parse(data).k;
     if (!k.x) return;
-    const candle = { time: Math.floor(k.t/1000), open:+k.o, high:+k.h, low:+k.l, close:+k.c, volume:+k.v };
-    const last = series[series.length-1];
-    if (last && last.time === candle.time) series[series.length-1] = candle;
-    else { series.push(candle); if(series.length>200) series.shift(); volumeHistory.push(candle.volume); if(volumeHistory.length>200) volumeHistory.shift(); }
+    const candle = { time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v };
+    const last = series[series.length - 1];
+    if (last && last.time === candle.time) series[series.length - 1] = candle;
+    else {
+      series.push(candle);
+      if (series.length > 200) series.shift();
+      volumeHistory.push(candle.volume);
+      if (volumeHistory.length > 200) volumeHistory.shift();
+    }
     step();
   });
   ws.on('close', () => setTimeout(connectWS, 5000));
 }
 
+// Inicialização
 (async () => {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=200');
-    series = data.map(k => ({ time:Math.floor(k[0]/1000), open:+k[1], high:+k[2], low:+k[3], close:+k[4], volume:+k[5] }));
-    volumeHistory = series.map(c=>c.volume);
+    series = data.map(k => ({ time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] }));
+    volumeHistory = series.map(c => c.volume);
     log('Histórico carregado');
-  } catch(e) { log('Erro ao carregar histórico'); }
+  } catch (e) { log('Erro ao carregar histórico'); }
   connectWS();
 })();
 
 io.on('connection', (socket) => {
-  socket.on('toggleAuto', () => { autoTrade = !autoTrade; log(`AutoTrade ${autoTrade?'ON':'OFF'}`); });
-  socket.on('toggleFast', () => { fastMode = !fastMode; log(`Modo Rápido ${fastMode?'ON':'OFF'}`); });
+  socket.on('toggleAuto', () => { autoTrade = !autoTrade; log(`AutoTrade ${autoTrade ? 'ON' : 'OFF'}`); });
+  socket.on('toggleFast', () => { fastMode = !fastMode; log(`Modo Rápido ${fastMode ? 'ON' : 'OFF'}`); });
 });
 
-server.listen(PORT, () => console.log(`Rodando na porta ${PORT}`));
+server.listen(PORT, () => console.log(`Robô rodando na porta ${PORT}`));
