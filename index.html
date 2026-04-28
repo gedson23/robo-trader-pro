@@ -498,6 +498,9 @@
         ema9Series = chart.addLineSeries({ color: '#fbbf24', lineWidth: 1 });
         ema21Series = chart.addLineSeries({ color: '#60a5fa', lineWidth: 1 });
         ema50Series = chart.addLineSeries({ color: '#f472b6', lineWidth: 1 });
+        // Reset lines to force recreation on redraw
+        linhaSuporte = null;
+        linhaResistencia = null;
         window.addEventListener('resize', () => chart.applyOptions({ width: container.clientWidth }));
       }
 
@@ -720,8 +723,8 @@
           return { signal: 'AGUARDAR' };
         }
 
-        const tendenciaAlta = e50 > prev50 && price > e50;      // EMA50 subindo E preço acima
-        const tendenciaBaixa = e50 < prev50 && price < e50;     // EMA50 caindo E preço abaixo
+        const tendenciaAlta = e50 > prev50 && price > e50;
+        const tendenciaBaixa = e50 < prev50 && price < e50;
         const emasAlinhadasCompra = e9 > e21 && e21 > e50;
         const emasAlinhadasVenda = e9 < e21 && e21 < e50;
         const dist21 = Math.abs(price - e21) / price;
@@ -741,7 +744,6 @@
             signal = 'VENDER';
             reason = `Tend. Baixa | Repuxo EMA21 | RSI ${_rsi.toFixed(1)}`;
           } else {
-            // Explicar o que está faltando
             if (!tendenciaAlta && !tendenciaBaixa) reason = 'Tendência indefinida';
             else if (tendenciaAlta && !emasAlinhadasCompra) reason = 'EMAs não alinhadas para compra';
             else if (tendenciaBaixa && !emasAlinhadasVenda) reason = 'EMAs não alinhadas para venda';
@@ -893,6 +895,7 @@
           candleSeries.setData(series);
           atualizarLinhasEMA();
           analisarEAtualizarUI();
+          calcularSuporteResistencia(); // ← adicionado
           iniciarTimerVela();
           return;
         }
@@ -913,7 +916,10 @@
           candleSeries.setData(series);
           setText('chartStatus','✅');
         } catch(e) { setText('chartStatus','❌'); }
-        atualizarLinhasEMA(); analisarEAtualizarUI(); iniciarTimerVela();
+        atualizarLinhasEMA();
+        analisarEAtualizarUI();
+        calcularSuporteResistencia(); // ← adicionado
+        iniciarTimerVela();
         salvarEstado();
       }
 
@@ -924,7 +930,9 @@
         const last = series[series.length-1];
         if (last && last.time===t) series[series.length-1] = c;
         else { series.push(c); if(series.length>200) series.shift(); }
-        atualizarLinhasEMA(); analisarEAtualizarUI();
+        atualizarLinhasEMA();
+        analisarEAtualizarUI();
+        calcularSuporteResistencia(); // ← adicionado
       }
 
       function conectarWebSocket() {
@@ -941,6 +949,7 @@
           candleSeries.setData(series);
           atualizarLinhasEMA();
           analisarEAtualizarUI();
+          calcularSuporteResistencia(); // ← adicionado
           iniciarTimerVela();
         } else {
           fetchHistoricalKlines(true);
@@ -1039,7 +1048,7 @@
       };
       autoTradeEnabled = document.getElementById('autoTradeEnabled').checked;
       atualizarSaldoUI(); atualizarPainelHistorico(); renderPosition();
-      if (series.length) { candleSeries.setData(series); atualizarLinhasEMA(); analisarEAtualizarUI(); iniciarTimerVela(); }
+      if (series.length) { candleSeries.setData(series); atualizarLinhasEMA(); analisarEAtualizarUI(); calcularSuporteResistencia(); iniciarTimerVela(); }
       if (autoTradeEnabled) conectarWebSocket(); else if (!series.length) fetchHistoricalKlines(true);
       if (temAPI()) setTimeout(atualizarSaldoReal, 1000);
 
