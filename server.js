@@ -1,6 +1,6 @@
 const express = require('express');
 const http = require('http');
-const { server } = require('socket.io');
+const { Server } = require('socket.io');
 const WebSocket = require('ws');
 const axios = require('axios');
 const fs = require('fs');
@@ -10,7 +10,6 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Servir arquivos estáticos
 app.use(express.static('public'));
 if (!fs.existsSync('public')) fs.mkdirSync('public');
 fs.writeFileSync('public/index.html', `
@@ -46,7 +45,6 @@ function toggleAuto(){ socket.emit('toggleAuto'); }
 function toggleFast(){ socket.emit('toggleFast'); }
 </script></body></html>`);
 
-// Estado do robô
 let series = [];
 let volumeHistory = [];
 let saldo = 10000;
@@ -61,15 +59,12 @@ let strategy = {
   rsiMin: 35,
   rsiMax: 65,
   safeHours: true,
-  useTrailing: true,
-  useSAR: false,
   volMult: 1.2,
   profitGoal: 200,
   minInterval: 10
 };
 let lastOrderTime = 0;
 
-// Indicadores
 function ema(arr, n) {
   if (arr.length < n) return null;
   const k = 2 / (n + 1);
@@ -131,17 +126,11 @@ function sar(highs, lows, closes, accel = 0.02, maxAccel = 0.2) {
   for (let i = 1; i < closes.length; i++) {
     let sarVal = result[i - 1].value + af * (ep - result[i - 1].value);
     if (isLong) {
-      if (lows[i] < sarVal) {
-        isLong = false; sarVal = ep; af = accel; ep = lows[i];
-      } else {
-        if (highs[i] > ep) { ep = highs[i]; af = Math.min(af + accel, maxAccel); }
-      }
+      if (lows[i] < sarVal) { isLong = false; sarVal = ep; af = accel; ep = lows[i]; }
+      else { if (highs[i] > ep) { ep = highs[i]; af = Math.min(af + accel, maxAccel); } }
     } else {
-      if (highs[i] > sarVal) {
-        isLong = true; sarVal = ep; af = accel; ep = highs[i];
-      } else {
-        if (lows[i] < ep) { ep = lows[i]; af = Math.min(af + accel, maxAccel); }
-      }
+      if (highs[i] > sarVal) { isLong = true; sarVal = ep; af = accel; ep = highs[i]; }
+      else { if (lows[i] < ep) { ep = lows[i]; af = Math.min(af + accel, maxAccel); } }
     }
     result.push({ value: sarVal });
   }
@@ -259,7 +248,6 @@ function connectWS() {
   ws.on('close', () => setTimeout(connectWS, 5000));
 }
 
-// Inicialização
 (async () => {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=200');
@@ -275,4 +263,4 @@ io.on('connection', (socket) => {
   socket.on('toggleFast', () => { fastMode = !fastMode; log(`Modo Rápido ${fastMode ? 'ON' : 'OFF'}`); });
 });
 
-server.listen(PORT, () => console.log(`Robô rodando na porta ${PORT}`));
+server.listen(PORT, () => console.log(`Rodando na porta ${PORT}`));
