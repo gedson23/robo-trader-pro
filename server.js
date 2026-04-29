@@ -3,16 +3,17 @@ const http = require('http');
 const { Server } = require('socket.io');
 const WebSocket = require('ws');
 const axios = require('axios');
-const fs = require('fs');
+const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Serve apenas a pasta public (sem sobrescrever o index.html)
-app.use(express.static('public'));
+// Servir arquivos estáticos da pasta "public"
+app.use(express.static(path.join(__dirname, 'public')));
 
+// ========== ESTADO DO ROBÔ ==========
 let series = [];
 let volumeHistory = [];
 let saldo = 10000;
@@ -33,6 +34,7 @@ let strategy = {
 };
 let lastOrderTime = 0;
 
+// ========== INDICADORES ==========
 function ema(arr, n) {
   if (arr.length < n) return null;
   const k = 2 / (n + 1);
@@ -40,25 +42,34 @@ function ema(arr, n) {
   for (let i = n; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
   return e;
 }
+
 function rsi(closes, n = 14) {
   if (closes.length < n + 1) return null;
   let gains = 0, losses = 0;
   for (let i = closes.length - n; i < closes.length; i++) {
     const diff = closes[i] - closes[i - 1];
-    if (diff >= 0) gains += diff; else losses -= diff;
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
   }
-  const ag = gains / n, al = losses / n;
+  const ag = gains / n;
+  const al = losses / n;
   if (al === 0) return 100;
-  return 100 - (100 / (1 + (ag / al)));
+  return 100 - 100 / (1 + ag / al);
 }
+
 function atr(highs, lows, closes, period = 14) {
   if (highs.length < period + 1) return null;
   let tr = 0;
   for (let i = highs.length - period; i < highs.length; i++) {
-    tr += Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1]));
+    tr += Math.max(
+      highs[i] - lows[i],
+      Math.abs(highs[i] - closes[i - 1]),
+      Math.abs(lows[i] - closes[i - 1])
+    );
   }
   return tr / period;
 }
+
 function adx(highs, lows, closes, period = 14) {
   if (closes.length < period * 2) return null;
   const tr = [], plusDM = [], minusDM = [];
@@ -98,8 +109,10 @@ function analyze() {
   const avgVolume = volumeHistory.slice(-10).reduce((a, b) => a + b, 0) / 10 || 0;
   const prev50 = series.length >= 51 ? ema(closes.slice(0, -1), 50) : null;
 
-  if (strategy.safeHours && new Date().getUTCHours() < 6) return { signal: 'AGUARDAR', reason: 'Horário 00-06 UTC' };
-  if (!e9 || !e21 || !e50 || _rsi === null || _adx === null || !_atr) return { signal: 'AGUARDAR', reason: 'Indicadores incompletos' };
+  if (strategy.safeHours && new Date().getUTCHours() < 6)
+    return { signal: 'AGUARDAR', reason: 'Horário 00-06 UTC' };
+  if (!e9 || !e21 || !e50 || _rsi === null || _adx === null || !_atr)
+    return { signal: 'AGUARDAR', reason: 'Indicadores incompletos' };
   if (!prev50) return { signal: 'AGUARDAR', reason: 'EMA50 anterior indisponível' };
 
   const fast = fastMode;
@@ -109,7 +122,8 @@ function analyze() {
   const exigeVolume = !fast;
 
   if (_adx < adxMin) return { signal: 'AGUARDAR', reason: `ADX baixo (${_adx.toFixed(1)})` };
-  if (exigeVolume && avgVolume > 0 && volumeAtual < strategy.volMult * avgVolume) return { signal: 'AGUARDAR', reason: 'Volume fraco' };
+  if (exigeVolume && avgVolume > 0 && volumeAtual < strategy.volMult * avgVolume)
+    return { signal: 'AGUARDAR', reason: 'Volume fraco' };
 
   const tendAlta = e50 > prev50 && price > e50;
   const tendBaixa = e50 < prev50 && price < e50;
@@ -132,7 +146,7 @@ function analyze() {
 function executar(signal, price) {
   if (!price || Date.now() < lastOrderTime + strategy.minInterval * 1000) return;
   const orderBRL = strategy.orderQty;
-  const qty = orderBRL / 5.20 / price;
+  const qty = orderBRL / 5.2 / price;
   if (signal === 'BUY') {
     if (!position) {
       if (saldo < price * qty) return;
@@ -177,7 +191,7 @@ function log(msg) {
   io.emit('log', msg);
 }
 
-// Conexão WebSocket (Binance, sem sobrescrever interface)
+// ========== WEBSOCKET (BINANCE) ==========
 function connectWS() {
   log('Conectando ao WebSocket da Binance...');
   const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@kline_1m');
@@ -191,7 +205,14 @@ function connectWS() {
   ws.on('message', (data) => {
     const k = JSON.parse(data).k;
     if (!k.x) return;
-    const candle = { time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v };
+    const candle = {
+      time: Math.floor(k.t / 1000),
+      open: +k.o,
+      high: +k.h,
+      low: +k.l,
+      close: +k.c,
+      volume: +k.v
+    };
     const last = series[series.length - 1];
     if (last && last.time === candle.time) series[series.length - 1] = candle;
     else {
@@ -203,17 +224,26 @@ function connectWS() {
     step();
   });
 
-  ws.on('close', (code, reason) => {
-    console.warn(`WebSocket fechado (código ${code}). Tentando reconectar em 5s...`);
+  ws.on('close', () => {
+    log('WebSocket fechado. Reconectando em 5s...');
     setTimeout(connectWS, 5000);
   });
 }
 
-// Carregar histórico
+// ========== CARREGAR HISTÓRICO ==========
 (async () => {
   try {
-    const { data } = await axios.get('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=200');
-    series = data.map(k => ({ time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] }));
+    const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
+      params: { symbol: 'BTCUSDT', interval: '1m', limit: 200 }
+    });
+    series = data.map(k => ({
+      time: Math.floor(k[0] / 1000),
+      open: +k[1],
+      high: +k[2],
+      low: +k[3],
+      close: +k[4],
+      volume: +k[5]
+    }));
     volumeHistory = series.map(c => c.volume);
     log('Histórico carregado');
   } catch (e) {
@@ -224,8 +254,14 @@ function connectWS() {
 })();
 
 io.on('connection', (socket) => {
-  socket.on('toggleAuto', () => { autoTrade = !autoTrade; log(`AutoTrade ${autoTrade ? 'ON' : 'OFF'}`); });
-  socket.on('toggleFast', () => { fastMode = !fastMode; log(`Modo Rápido ${fastMode ? 'ON' : 'OFF'}`); });
+  socket.on('toggleAuto', () => {
+    autoTrade = !autoTrade;
+    log(`AutoTrade ${autoTrade ? 'ON' : 'OFF'}`);
+  });
+  socket.on('toggleFast', () => {
+    fastMode = !fastMode;
+    log(`Modo Rápido ${fastMode ? 'ON' : 'OFF'}`);
+  });
 });
 
 server.listen(PORT, () => console.log(`Rodando na porta ${PORT}`));
