@@ -10,10 +10,8 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Servir arquivos estáticos da pasta "public"
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ========== ESTADO DO ROBÔ ==========
 let series = [];
 let volumeHistory = [];
 let saldo = 10000;
@@ -34,7 +32,6 @@ let strategy = {
 };
 let lastOrderTime = 0;
 
-// ========== INDICADORES ==========
 function ema(arr, n) {
   if (arr.length < n) return null;
   const k = 2 / (n + 1);
@@ -191,27 +188,17 @@ function log(msg) {
   io.emit('log', msg);
 }
 
-// ========== WEBSOCKET (BINANCE) ==========
 function connectWS() {
   log('Conectando ao WebSocket da Binance...');
   const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@kline_1m');
-
-  ws.on('error', (err) => {
-    console.error('Erro no WebSocket:', err.message);
-  });
-
+  ws.on('error', (err) => console.error('Erro no WebSocket:', err.message));
   ws.on('open', () => log('Conectado Binance'));
-
   ws.on('message', (data) => {
     const k = JSON.parse(data).k;
     if (!k.x) return;
     const candle = {
       time: Math.floor(k.t / 1000),
-      open: +k.o,
-      high: +k.h,
-      low: +k.l,
-      close: +k.c,
-      volume: +k.v
+      open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v
     };
     const last = series[series.length - 1];
     if (last && last.time === candle.time) series[series.length - 1] = candle;
@@ -223,14 +210,12 @@ function connectWS() {
     }
     step();
   });
-
   ws.on('close', () => {
     log('WebSocket fechado. Reconectando em 5s...');
     setTimeout(connectWS, 5000);
   });
 }
 
-// ========== CARREGAR HISTÓRICO ==========
 (async () => {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
@@ -238,11 +223,7 @@ function connectWS() {
     });
     series = data.map(k => ({
       time: Math.floor(k[0] / 1000),
-      open: +k[1],
-      high: +k[2],
-      low: +k[3],
-      close: +k[4],
-      volume: +k[5]
+      open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5]
     }));
     volumeHistory = series.map(c => c.volume);
     log('Histórico carregado');
