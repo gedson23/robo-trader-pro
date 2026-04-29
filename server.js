@@ -10,40 +10,8 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Serve apenas a pasta public (sem sobrescrever o index.html)
 app.use(express.static('public'));
-if (!fs.existsSync('public')) fs.mkdirSync('public');
-fs.writeFileSync('public/index.html', `
-<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Robô Trader</title>
-<style>body{background:#0f172a;color:#fff;font-family:Arial;padding:20px;max-width:500px;margin:auto}.card{background:#1e293b;padding:15px;border-radius:12px;margin:10px 0}button{padding:12px;margin:4px;border-radius:8px;border:none;font-weight:bold;background:#2d3a4f;color:#fff}.buy{color:#22c55e}.sell{color:#ef4444}.wait{color:#facc15}.log{max-height:150px;overflow-y:auto;background:#0f172a;padding:10px;font-size:12px}</style>
-</head><body>
-<h2>🤖 Robô Trader 24h</h2>
-<div class="card">
-<span>Saldo USDT:</span> <b id="saldo">--</b><br>
-<span>Preço:</span> <b id="preco">--</b><br>
-<span>Sinal:</span> <b id="sinal">--</b>
-</div>
-<div class="card">
-<button onclick="toggleAuto()" id="btnAuto">AutoTrade OFF</button>
-<button onclick="toggleFast()" id="btnFast">Modo Rápido OFF</button>
-</div>
-<div class="card"><b>Log:</b><div class="log" id="log"></div></div>
-<script src="/socket.io/socket.io.js"></script>
-<script>
-const socket = io();
-socket.on('state', d => {
-  document.getElementById('saldo').innerText = d.saldo?.toFixed(2) || '--';
-  document.getElementById('preco').innerText = d.preco || '--';
-  document.getElementById('sinal').innerText = d.signal || '--';
-  document.getElementById('sinal').className = d.signal === 'COMPRAR' ? 'buy' : d.signal === 'VENDER' ? 'sell' : 'wait';
-});
-socket.on('log', msg => {
-  const div = document.getElementById('log');
-  div.innerHTML = '<div>'+msg+'</div>' + div.innerHTML;
-});
-function toggleAuto(){ socket.emit('toggleAuto'); }
-function toggleFast(){ socket.emit('toggleFast'); }
-</script></body></html>`);
 
 let series = [];
 let volumeHistory = [];
@@ -116,25 +84,6 @@ function adx(highs, lows, closes, period = 14) {
   const diMinus = (minusSmooth / atrSmooth) * 100;
   if (diPlus + diMinus === 0) return 0;
   return Math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100;
-}
-function sar(highs, lows, closes, accel = 0.02, maxAccel = 0.2) {
-  if (highs.length < 2) return [];
-  let isLong = closes[1] > closes[0];
-  let af = accel;
-  let ep = isLong ? highs[0] : lows[0];
-  const result = [{ value: isLong ? lows[0] - (highs[0] - lows[0]) * 0.5 : highs[0] + (highs[0] - lows[0]) * 0.5 }];
-  for (let i = 1; i < closes.length; i++) {
-    let sarVal = result[i - 1].value + af * (ep - result[i - 1].value);
-    if (isLong) {
-      if (lows[i] < sarVal) { isLong = false; sarVal = ep; af = accel; ep = lows[i]; }
-      else { if (highs[i] > ep) { ep = highs[i]; af = Math.min(af + accel, maxAccel); } }
-    } else {
-      if (highs[i] > sarVal) { isLong = true; sarVal = ep; af = accel; ep = highs[i]; }
-      else { if (lows[i] < ep) { ep = lows[i]; af = Math.min(af + accel, maxAccel); } }
-    }
-    result.push({ value: sarVal });
-  }
-  return result;
 }
 
 function analyze() {
@@ -228,15 +177,13 @@ function log(msg) {
   io.emit('log', msg);
 }
 
-// ========== CONEXÃO WEBSOCKET (COM TRATAMENTO DE ERRO) ==========
+// Conexão WebSocket (Binance, sem sobrescrever interface)
 function connectWS() {
   log('Conectando ao WebSocket da Binance...');
   const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@kline_1m');
 
-  // Captura erros (ex.: 451) para evitar queda do servidor
   ws.on('error', (err) => {
     console.error('Erro no WebSocket:', err.message);
-    // Não faz mais nada; o evento 'close' será chamado em seguida
   });
 
   ws.on('open', () => log('Conectado Binance'));
@@ -257,12 +204,12 @@ function connectWS() {
   });
 
   ws.on('close', (code, reason) => {
-    console.warn(`WebSocket fechado (código ${code}). Motivo: ${reason}. Tentando reconectar em 5s...`);
+    console.warn(`WebSocket fechado (código ${code}). Tentando reconectar em 5s...`);
     setTimeout(connectWS, 5000);
   });
 }
 
-// ========== CARREGAMENTO INICIAL DO HISTÓRICO ==========
+// Carregar histórico
 (async () => {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=200');
@@ -270,11 +217,9 @@ function connectWS() {
     volumeHistory = series.map(c => c.volume);
     log('Histórico carregado');
   } catch (e) {
-    // Mostra detalhes do erro, mas não quebra o servidor
     console.error('Erro ao carregar histórico:', e.message);
     log(`Erro histórico: ${e.message}`);
   }
-  // Inicia o WebSocket de qualquer forma
   connectWS();
 })();
 
