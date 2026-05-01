@@ -92,6 +92,10 @@
       <div style="font-size:14px;">PnL Atual</div>
       <span style="font-size:26px; font-weight:bold;" id="pnlDisplay">—</span>
       <span class="badge" id="pnlPercentDisplay">0.00%</span>
+      <div style="margin-top:6px;">
+        <div class="row" style="font-size:13px;"><span>USDT:</span><b id="pnlUSDT">0.00</b></div>
+        <div class="row" style="font-size:13px;"><span>BRL:</span><b id="pnlBRL">R$ 0,00</b></div>
+      </div>
     </div>
     <div>
       <div style="font-size:14px;">Sinal (v7.1)</div>
@@ -128,22 +132,25 @@
       <label class="flex-row"><input type="checkbox" id="autoTradeEnabled"> 🤖 Auto-Trade</label>
     </div>
     <div class="grid-2">
-      <div><label>Qtd. Ordem (R$)</label><input id="orderQty" value="300"></div>
+      <div><label>Qtd. Ordem (R$)</label><input id="orderQty" value="1000"></div>
       <div><label>Mult. TP (ATR)</label><input id="tpAtrMult" value="3.0"></div>
       <div><label>Mult. SL (ATR)</label><input id="slAtrMult" value="2.0"></div>
-      <div><label>Meta Lucro (R$)</label><input id="profitGoalBRL" value="200"></div>
+      <div><label>Meta Lucro (R$)</label><input id="profitGoalBRL" value="500"></div>
       <div><label>Intervalo (s)</label><input id="intervalInput" value="10"></div>
     </div>
     <div class="grid-2" style="margin-top:8px;">
       <div><label>RSI min</label><input id="rsiMin" value="35" type="number"></div>
       <div><label>RSI max</label><input id="rsiMax" value="65" type="number"></div>
-      <div><label>ADX mín</label><input id="adxMin" value="20" type="number"></div>
+      <div><label>ADX mín</label><input id="adxMin" value="15" type="number"></div>
       <div><label>Volume mult.</label><input id="volMult" value="1.2" step="0.1"></div>
+    </div>
+    <div class="grid-2" style="margin-top:8px;">
+      <div><label>Dist. Máx. EMA (%)</label><input id="distMaxInput" value="3.0" step="0.1"></div>
     </div>
     <label class="flex-row"><input type="checkbox" id="useTrailingStop" checked> 🛡️ Trailing Stop</label>
     <label class="flex-row"><input type="checkbox" id="useSAR"> 🎯 Parabolic SAR</label>
     <label class="flex-row"><input type="checkbox" id="safeHoursFilter" checked> 🕒 Pausar 00h-06h UTC</label>
-    <label class="flex-row"><input type="checkbox" id="fastMode"> 🚀 Modo Rápido (mais trades)</label>
+    <label class="flex-row"><input type="checkbox" id="fastMode" checked> 🚀 Modo Rápido (mais trades)</label>
     
     <div class="flex-row" style="margin-top:10px;">
       <span id="connStatus" class="status-badge wait">⏳ Desconectado</span>
@@ -246,7 +253,7 @@ function iniciarRobo() {
     let lastOrderTime = 0, tradeHistory = [], saldoUSDT = 10000, qtyAtivo = 0, usdBrlRate = 5.20;
     let autoTradeEnabled = false, pauseUntil = 0, cooldownUntil = 0;
     let trailingActive = false, trailingHighest = Infinity, trailingLowest = 0;
-    let STRATEGY = { orderQty:300, tpAtr:3.0, slAtr:2.0, minOrderInterval:10, profitGoalBRL:200, rsiMin:35, rsiMax:65, adxMin:20, volMult:1.2, useTrailing:true, useSAR:false, safeHours:true, fastMode:false };
+    let STRATEGY = { orderQty:1000, tpAtr:3.0, slAtr:2.0, minOrderInterval:10, profitGoalBRL:500, rsiMin:35, rsiMax:65, adxMin:15, volMult:1.2, useTrailing:true, useSAR:false, safeHours:true, fastMode:true, distMaxPercent:3.0 };
     const STORAGE_KEY = 'roboTraderPro_v7.1';
     let wsReconnectTimer = null, reconnectAttempts = 0, manualDisconnect = false;
     let suporte = 0, resistencia = 0, volumeHistory = [];
@@ -284,6 +291,7 @@ function iniciarRobo() {
           rsiMax: document.getElementById('rsiMax').value,
           adxMin: document.getElementById('adxMin').value,
           volMult: document.getElementById('volMult').value,
+          distMaxPercent: document.getElementById('distMaxInput').value,
           useTrailing: document.getElementById('useTrailingStop').checked,
           useSAR: document.getElementById('useSAR').checked,
           safeHours: document.getElementById('safeHoursFilter').checked,
@@ -311,19 +319,20 @@ function iniciarRobo() {
         document.getElementById('intervalDisplay').innerText = currentInterval + (currentInterval==='60'?'h':'m');
         document.getElementById('testnetMode').checked = e.testnet !== false;
         if (e.strategy) {
-          document.getElementById('orderQty').value = e.strategy.orderQty || 300;
+          document.getElementById('orderQty').value = e.strategy.orderQty || 1000;
           document.getElementById('tpAtrMult').value = e.strategy.tpAtrMult || 3.0;
           document.getElementById('slAtrMult').value = e.strategy.slAtrMult || 2.0;
-          document.getElementById('profitGoalBRL').value = e.strategy.profitGoalBRL || 200;
+          document.getElementById('profitGoalBRL').value = e.strategy.profitGoalBRL || 500;
           document.getElementById('intervalInput').value = e.strategy.minOrderInterval || 10;
           document.getElementById('rsiMin').value = e.strategy.rsiMin || 35;
           document.getElementById('rsiMax').value = e.strategy.rsiMax || 65;
-          document.getElementById('adxMin').value = e.strategy.adxMin || 20;
+          document.getElementById('adxMin').value = e.strategy.adxMin || 15;
           document.getElementById('volMult').value = e.strategy.volMult || 1.2;
+          document.getElementById('distMaxInput').value = e.strategy.distMaxPercent || 3.0;
           document.getElementById('useTrailingStop').checked = e.strategy.useTrailing !== false;
           document.getElementById('useSAR').checked = e.strategy.useSAR || false;
           document.getElementById('safeHoursFilter').checked = e.strategy.safeHours !== false;
-          document.getElementById('fastMode').checked = e.strategy.fastMode || false;
+          document.getElementById('fastMode').checked = e.strategy.fastMode !== false;
         }
         if (e.series && e.series.length) series = e.series;
         saldoUSDTInput.value = saldoUSDT.toFixed(2);
@@ -417,7 +426,7 @@ function iniciarRobo() {
       ema50Series.setData(calcEma(closes, 50));
     }
 
-    // Estratégia v7.1 com modo rápido
+    // Estratégia v7.1 com modo rápido e distância EMA ajustável
     function analyze() {
       const MIN_VELAS_SINAL = 50;
       const MIN_VELAS_INDICADORES = 15;
@@ -427,6 +436,9 @@ function iniciarRobo() {
       }
 
       const fastMode = document.getElementById('fastMode').checked;
+      const distMaxPercent = parseFloat(document.getElementById('distMaxInput').value) || 3.0;
+      const distMax = distMaxPercent / 100;  // converte de % para decimal
+
       const highs = series.map(c=>c.high), lows = series.map(c=>c.low), closes = series.map(c=>c.close);
       const price = closes[closes.length-1];
       const e9 = ema(closes,9), e21 = ema(closes,21), e50 = ema(closes,50);
@@ -467,9 +479,7 @@ function iniciarRobo() {
         return { signal:'AGUARDAR', reason:'Indicadores incompletos' };
       }
 
-      // Parâmetros flexíveis no modo rápido
-      const adxLimite = fastMode ? 15 : STRATEGY.adxMin;
-      const distMax = fastMode ? 0.03 : 0.015;
+      const adxLimite = fastMode ? Math.min(STRATEGY.adxMin, 15) : STRATEGY.adxMin;
       const exigeCandle = !fastMode;
       const exigeVolume = !fastMode;
 
@@ -491,10 +501,11 @@ function iniciarRobo() {
       const candleAlta = lastCandle.close > lastCandle.open;
       const candleBaixa = lastCandle.close < lastCandle.open;
 
-      const longAbaixoResist = price < resistencia * 0.99;
-      const longAcimaSuporte = price > suporte * 1.01;
-      const shortAcimaSuporte = price > suporte * 0.99;
-      const shortAbaixoResist = price < resistencia * 0.99;
+      // Correção: suporte/resistência usando margem de 0.5% (flexível)
+      const longAbaixoResist = price < resistencia * 1.005;
+      const longAcimaSuporte = price > suporte * 0.995;
+      const shortAcimaSuporte = price > suporte * 0.995;
+      const shortAbaixoResist = price < resistencia * 0.995;
       const rsiPrev = rsi(closes.slice(0,-1),14);
       const pricePrev = closes[closes.length-2];
       const divergenciaBaixa = (price > pricePrev && _rsi < rsiPrev);
@@ -507,7 +518,6 @@ function iniciarRobo() {
         } else if (tendenciaBaixa && emasAlinhadasVenda && dist21 < distMax && _rsi>35 && _rsi<65 && (!exigeCandle || candleBaixa) && shortAcimaSuporte && shortAbaixoResist && !divergenciaAlta) {
           signal = 'VENDER'; reason = fastMode ? 'Modo Rápido: Venda' : 'Tend. Baixa + Repuxo EMA21';
         } else {
-          // Explicar motivo
           if (!tendenciaAlta && !tendenciaBaixa) reason = 'Tendência indefinida';
           else if (tendenciaAlta && !emasAlinhadasCompra) reason = 'EMAs não alinhadas para compra';
           else if (tendenciaBaixa && !emasAlinhadasVenda) reason = 'EMAs não alinhadas para venda';
@@ -615,7 +625,7 @@ function iniciarRobo() {
     }
 
     async function executarOrdem(side) {
-      const orderBRL = +document.getElementById('orderQty').value || 300;
+      const orderBRL = +document.getElementById('orderQty').value || 1000;
       const price = series.length ? series[series.length-1].close : 0;
       if (!price) { log('Preço indisponível'); return; }
       const qtyBTC = orderBRL / usdBrlRate / price;
@@ -627,6 +637,7 @@ function iniciarRobo() {
       STRATEGY.rsiMax = +document.getElementById('rsiMax').value;
       STRATEGY.adxMin = +document.getElementById('adxMin').value;
       STRATEGY.volMult = +document.getElementById('volMult').value;
+      STRATEGY.distMaxPercent = +document.getElementById('distMaxInput').value;
       STRATEGY.useTrailing = document.getElementById('useTrailingStop').checked;
       STRATEGY.useSAR = document.getElementById('useSAR').checked;
 
@@ -644,6 +655,7 @@ function iniciarRobo() {
 
     function renderPosition() {
       const pnlEl = document.getElementById('pnlDisplay'), badge = document.getElementById('pnlPercentDisplay');
+      const pnlUSDTEl = document.getElementById('pnlUSDT'), pnlBRLEl = document.getElementById('pnlBRL');
       if (currentPosition) {
         setText('position', currentPosition.side==='BUY'?'📈 LONG':'📉 SHORT');
         setText('positionQty', Math.abs(currentPosition.qty).toFixed(6));
@@ -655,12 +667,13 @@ function iniciarRobo() {
         const cor = pnlPercent>=0?'#22c55e':'#ef4444';
         pnlEl.style.color=cor; pnlEl.innerText=`${pnlPercent>=0?'+':''}${pnlPercent.toFixed(2)}%`;
         badge.innerText=`${pnlPercent>=0?'+':''}${pnlPercent.toFixed(2)}%`; badge.style.color=cor;
-        setText('pnlUSDT', `${pnlUSDT>=0?'+':''}${pnlUSDT.toFixed(2)} USDT`);
-        setText('pnlBRL', `R$ ${(pnlUSDT*usdBrlRate).toFixed(2)}`);
+        if (pnlUSDTEl) pnlUSDTEl.innerText = `${pnlUSDT>=0?'+':''}${pnlUSDT.toFixed(2)} USDT`;
+        if (pnlBRLEl) pnlBRLEl.innerText = `R$ ${(pnlUSDT*usdBrlRate).toFixed(2)}`;
       } else {
         setText('position','—'); setText('positionQty','—'); setText('entryPrice','—');
         pnlEl.style.color='#fff'; pnlEl.innerText='—'; badge.innerText='0.00%';
-        setText('pnlUSDT','0.00 USDT'); setText('pnlBRL','R$ 0,00');
+        if (pnlUSDTEl) pnlUSDTEl.innerText = '0.00 USDT';
+        if (pnlBRLEl) pnlBRLEl.innerText = 'R$ 0,00';
       }
     }
 
@@ -684,7 +697,7 @@ function iniciarRobo() {
     window.limparHistoricoTrades = () => { tradeHistory=[]; atualizarPainelHistorico(); salvarEstado(); };
 
     function verificarMetaLucro() {
-      const meta = +document.getElementById('profitGoalBRL').value || 200;
+      const meta = +document.getElementById('profitGoalBRL').value || 500;
       const lucroBRL = tradeHistory.reduce((acc,t)=>acc + t.lucro*usdBrlRate, 0);
       if (lucroBRL >= meta && autoTradeEnabled) {
         document.getElementById('autoTradeEnabled').checked = false;
@@ -846,7 +859,7 @@ function iniciarRobo() {
       if (autoTradeEnabled && (!ws || ws.readyState!==WebSocket.OPEN)) conectarWebSocket();
       else if (!autoTradeEnabled) pararConexaoWebSocket(true);
     });
-    ['orderQty','tpAtrMult','slAtrMult','profitGoalBRL','intervalInput','rsiMin','rsiMax','adxMin','volMult','useTrailingStop','useSAR','safeHoursFilter','fastMode','testnetMode'].forEach(id => document.getElementById(id).addEventListener('change', salvarEstado));
+    ['orderQty','tpAtrMult','slAtrMult','profitGoalBRL','intervalInput','rsiMin','rsiMax','adxMin','volMult','distMaxInput','useTrailingStop','useSAR','safeHoursFilter','fastMode','testnetMode'].forEach(id => document.getElementById(id).addEventListener('change', salvarEstado));
     document.getElementById('symbolSelect').addEventListener('change', salvarEstado);
     document.getElementById('intervalSelect').addEventListener('change', function() {
       currentInterval = this.value;
@@ -875,6 +888,7 @@ function iniciarRobo() {
       rsiMax: +document.getElementById('rsiMax').value,
       adxMin: +document.getElementById('adxMin').value,
       volMult: +document.getElementById('volMult').value,
+      distMaxPercent: +document.getElementById('distMaxInput').value,
       useTrailing: document.getElementById('useTrailingStop').checked,
       useSAR: document.getElementById('useSAR').checked,
       safeHours: document.getElementById('safeHoursFilter').checked,
@@ -892,18 +906,12 @@ function iniciarRobo() {
   })();
 }
 </script>
-  <script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js');
-  });
-}
-</script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js');
   });
 }
-</script></body>
-  </html>
+</script>
+</body>
+</html>
